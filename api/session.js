@@ -1,14 +1,7 @@
 const { Pool } = require("pg");
 const { getUserFromRequest } = require("./_auth");
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: buildSslConfig(),
-  max: 3,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 10000,
-});
-
+let pool;
 let tableReady = false;
 
 module.exports = async function handler(req, res) {
@@ -16,13 +9,13 @@ module.exports = async function handler(req, res) {
 
   const username = getUserFromRequest(req);
   if (!username) {
-    return send(res, 401, { ok: false, error: "Faça login para acessar os dados." });
+    return send(res, 401, { ok: false, error: "Faca login para acessar os dados." });
   }
 
   if (!process.env.DATABASE_URL) {
     return send(res, 500, {
       ok: false,
-      error: "DATABASE_URL não configurada na Vercel.",
+      error: "DATABASE_URL nao configurada na Vercel.",
     });
   }
 
@@ -46,10 +39,25 @@ module.exports = async function handler(req, res) {
     console.error(error);
     return send(res, 500, {
       ok: false,
-      error: "Erro ao acessar o banco de dados.",
+      error: databaseErrorMessage(error),
+      code: error.code || "",
     });
   }
 };
+
+function getPool() {
+  if (!pool) {
+    pool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: buildSslConfig(),
+      max: 1,
+      idleTimeoutMillis: 10000,
+      connectionTimeoutMillis: 4000,
+    });
+  }
+
+  return pool;
+}
 
 function buildSslConfig() {
   if (process.env.PG_CA_CERT) {
@@ -73,7 +81,7 @@ function send(res, status, payload) {
 async function ensureTable() {
   if (tableReady) return;
 
-  await pool.query(`
+  await runQuery(`
     create table if not exists dashboard_user_sessions (
       username text primary key,
       payload jsonb not null,
@@ -86,7 +94,7 @@ async function ensureTable() {
 }
 
 async function getSession(req, res, username) {
-  const result = await pool.query(
+  const result = await runQuery(
     "select payload, updated_at from dashboard_user_sessions where username = $1",
     [username]
   );
@@ -110,7 +118,7 @@ async function saveSession(req, res, username) {
     return send(res, 400, { ok: false, error: "Sessão inválida." });
   }
 
-  await pool.query(
+  await runQuery(
     `
       insert into dashboard_user_sessions (username, payload, updated_at)
       values ($1, $2::jsonb, now())
@@ -124,8 +132,47 @@ async function saveSession(req, res, username) {
 }
 
 async function deleteSession(req, res, username) {
-  await pool.query("delete from dashboard_user_sessions where username = $1", [username]);
+  await runQuery("delete from dashboard_user_sessions where username = $1", [username]);
   return send(res, 200, { ok: true });
+}
+
+function runQuery(sql, params = []) {
+  return Promise.race([
+    getPool().query(sql, params),
+    new Promise((_, reject) => {
+      setTimeout(() => {
+        const error = new Error("Timeout ao conectar no banco.");
+        error.code = "DB_TIMEOUT";
+        reject(error);
+      }, 7000);
+    }),
+  ]);
+}
+
+function databaseErrorMessage(error) {
+  const message = String(error.message || "");
+
+  if (error.code === "DB_TIMEOUT" || /timeout/i.test(message)) {
+    return "Banco: timeout ao conectar. Verifique se o Aiven permite conexoes externas/Vercel.";
+  }
+
+  if (error.code === "ENOTFOUND" || error.code === "ECONNREFUSED") {
+    return `Banco: conexao recusada (${error.code}). Confira host e porta do DATABASE_URL.`;
+  }
+
+  if (error.code === "28P01") {
+    return "Banco: usuario ou senha do DATABASE_URL estao incorretos.";
+  }
+
+  if (/ssl|certificate/i.test(message)) {
+    return "Banco: erro de SSL/certificado. Confira sslmode=require ou PG_CA_CERT.";
+  }
+
+  if (error.code) {
+    return `Banco: ${error.code} - ${message}`;
+  }
+
+  return `Banco: ${message || "erro desconhecido"}`;
 }
 
 async function readBody(req) {
