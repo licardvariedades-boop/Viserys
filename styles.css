@@ -124,6 +124,7 @@ h2 {
 }
 
 .import-band,
+.cloud-band,
 .filters,
 .kpi-grid,
 .chart-grid,
@@ -252,6 +253,71 @@ h2 {
 .health-panel.warning {
   border-color: #e1bc7e;
   background: #fffaf0;
+}
+
+.cloud-band {
+  grid-template-columns: minmax(220px, 1fr) auto minmax(180px, 0.6fr);
+  align-items: end;
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.cloud-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.action-button {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid #b9d7c7;
+  border-radius: 8px;
+  background: var(--green);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 800;
+  padding: 0 13px;
+  white-space: nowrap;
+}
+
+.action-button:hover:not(:disabled) {
+  background: #12683f;
+}
+
+.action-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.action-button svg {
+  width: 17px;
+  height: 17px;
+  stroke-width: 2.4;
+}
+
+.cloud-status {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+  text-align: right;
+}
+
+.cloud-status.ok {
+  color: var(--green);
+}
+
+.cloud-status.warning {
+  color: var(--amber);
 }
 
 .filters {
@@ -586,6 +652,7 @@ th.money {
 
 @media (max-width: 1180px) {
   .import-band,
+  .cloud-band,
   .chart-grid,
   .split-section {
     grid-template-columns: 1fr;
@@ -620,6 +687,16 @@ th.money {
   .reconcile-grid,
   .money-breakdown {
     grid-template-columns: 1fr;
+  }
+
+  .cloud-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr auto;
+  }
+
+  .cloud-status {
+    justify-content: flex-start;
+    text-align: left;
   }
 
   .table-header,

@@ -1,0 +1,9 @@
+{
+  "name": "viserys-dropship-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "dependencies": {
+    "pg": "^8.16.3"
+  }
+}

@@ -10,6 +10,8 @@ const state = {
 };
 
 const SESSION_STORAGE_KEY = "mlDropshipDashboardSession:v1";
+const CLOUD_KEY_STORAGE_KEY = "mlDropshipDashboardCloudKey:v1";
+const CLOUD_SESSION_ENDPOINT = "/api/session";
 const SESSION_DATE_FIELDS = ["date", "updatedAt", "platformDate", "marketplaceDate"];
 
 const BR_MONTHS = new Map([
@@ -56,6 +58,11 @@ document.addEventListener("DOMContentLoaded", () => {
     loadBackup: document.querySelector("#loadBackup"),
     clearSaved: document.querySelector("#clearSaved"),
     backupFile: document.querySelector("#backupFile"),
+    cloudKey: document.querySelector("#cloudKey"),
+    cloudSave: document.querySelector("#cloudSave"),
+    cloudLoad: document.querySelector("#cloudLoad"),
+    cloudDelete: document.querySelector("#cloudDelete"),
+    cloudStatus: document.querySelector("#cloudStatus"),
     exportXlsx: document.querySelector("#exportXlsx"),
     exportCsv: document.querySelector("#exportCsv"),
     periodPreset: document.querySelector("#periodPreset"),
@@ -108,6 +115,10 @@ document.addEventListener("DOMContentLoaded", () => {
   refs.loadBackup.addEventListener("click", () => refs.backupFile.click());
   refs.clearSaved.addEventListener("click", clearSavedSession);
   refs.backupFile.addEventListener("change", importSessionBackup);
+  refs.cloudKey.addEventListener("input", handleCloudKeyInput);
+  refs.cloudSave.addEventListener("click", saveSessionToCloud);
+  refs.cloudLoad.addEventListener("click", loadSessionFromCloud);
+  refs.cloudDelete.addEventListener("click", deleteCloudSession);
   refs.exportXlsx.addEventListener("click", exportWorkbook);
   refs.exportCsv.addEventListener("click", exportCsv);
   refs.periodPreset.addEventListener("change", () => {
@@ -129,6 +140,7 @@ document.addEventListener("DOMContentLoaded", () => {
   refs.periodPreset.value = "all";
   refs.onlyMatched.checked = true;
   refs.ignoreCanceled.checked = true;
+  refs.cloudKey.value = restoreCloudKey();
   syncFilterVisibility();
   setupCharts();
   const restored = restoreSavedSession();
@@ -333,6 +345,113 @@ function clearSavedSession() {
   updateFilterOptions();
   renderAll();
   updateHealth();
+}
+
+function restoreCloudKey() {
+  try {
+    return window.localStorage?.getItem(CLOUD_KEY_STORAGE_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+function getCloudKey() {
+  return text(refs.cloudKey?.value);
+}
+
+function handleCloudKeyInput() {
+  const key = getCloudKey();
+  try {
+    if (key) {
+      window.localStorage?.setItem(CLOUD_KEY_STORAGE_KEY, key);
+    } else {
+      window.localStorage?.removeItem(CLOUD_KEY_STORAGE_KEY);
+    }
+  } catch {
+    // A chave continua funcionando na sessão atual mesmo se o navegador bloquear localStorage.
+  }
+  updateCloudControls();
+}
+
+function updateCloudControls() {
+  if (!refs.cloudKey) return;
+  const hasKey = Boolean(getCloudKey());
+  const hasSessionData = hasImportedData();
+  refs.cloudSave.disabled = !hasKey || !hasSessionData;
+  refs.cloudLoad.disabled = !hasKey;
+  refs.cloudDelete.disabled = !hasKey;
+}
+
+function setCloudStatus(message, kind = "") {
+  if (!refs.cloudStatus) return;
+  refs.cloudStatus.textContent = message;
+  refs.cloudStatus.classList.toggle("ok", kind === "ok");
+  refs.cloudStatus.classList.toggle("warning", kind === "warning");
+}
+
+async function cloudRequest(method, body = null) {
+  const key = getCloudKey();
+  if (!key) {
+    throw new Error("Digite uma chave da nuvem.");
+  }
+
+  const options = {
+    method,
+    headers: { "Content-Type": "application/json" },
+  };
+  let url = CLOUD_SESSION_ENDPOINT;
+
+  if (method === "GET") {
+    url += `?key=${encodeURIComponent(key)}`;
+  } else {
+    options.body = JSON.stringify({ key, ...body });
+  }
+
+  const response = await fetch(url, options);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data.ok === false) {
+    throw new Error(data.error || "Falha na sincronização com a nuvem.");
+  }
+  return data;
+}
+
+async function saveSessionToCloud() {
+  if (!hasImportedData()) {
+    setCloudStatus("Importe as planilhas antes", "warning");
+    return;
+  }
+
+  setCloudStatus("Salvando...");
+  try {
+    await cloudRequest("POST", { payload: buildSessionPayload() });
+    setCloudStatus("Sessão salva na nuvem", "ok");
+  } catch (error) {
+    console.error(error);
+    setCloudStatus(error.message, "warning");
+  }
+}
+
+async function loadSessionFromCloud() {
+  setCloudStatus("Carregando...");
+  try {
+    const data = await cloudRequest("GET");
+    applySessionPayload(data.payload);
+    setCloudStatus("Sessão carregada da nuvem", "ok");
+  } catch (error) {
+    console.error(error);
+    setCloudStatus(error.message, "warning");
+  }
+}
+
+async function deleteCloudSession() {
+  setCloudStatus("Apagando...");
+  try {
+    await cloudRequest("DELETE");
+    setCloudStatus("Sessão apagada da nuvem", "ok");
+  } catch (error) {
+    console.error(error);
+    setCloudStatus(error.message, "warning");
+  }
 }
 
 async function readWorkbook(file) {
@@ -834,6 +953,7 @@ function renderAll() {
   const hasSessionData = hasImportedData();
   refs.saveBackup.disabled = !hasSessionData;
   refs.clearSaved.disabled = !hasSessionData && !hasSavedSession();
+  updateCloudControls();
   refs.exportXlsx.disabled = !hasData;
   refs.exportCsv.disabled = !hasData;
 }

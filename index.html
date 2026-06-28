@@ -64,6 +64,25 @@
         </div>
       </section>
 
+      <section class="cloud-band" aria-label="Nuvem">
+        <div class="field cloud-key-field">
+          <label for="cloudKey">Chave da nuvem</label>
+          <input id="cloudKey" type="password" autocomplete="off" placeholder="Digite uma chave privada" />
+        </div>
+        <div class="cloud-actions">
+          <button class="action-button" id="cloudSave" type="button" disabled>
+            <i data-lucide="cloud-upload"></i>Salvar nuvem
+          </button>
+          <button class="action-button" id="cloudLoad" type="button" disabled>
+            <i data-lucide="cloud-download"></i>Carregar nuvem
+          </button>
+          <button class="icon-button" id="cloudDelete" type="button" disabled title="Apagar sessão da nuvem">
+            <i data-lucide="cloud-off"></i>
+          </button>
+        </div>
+        <div class="cloud-status" id="cloudStatus">Sem sincronização</div>
+      </section>
+
       <section class="filters" aria-label="Filtros">
         <div class="field">
           <label for="periodPreset">Período</label>

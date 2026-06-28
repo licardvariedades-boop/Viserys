@@ -39,3 +39,12 @@ Os botões do topo exportam:
 Depois que uma planilha é importada, a sessão é salva automaticamente no armazenamento local do navegador. Ao abrir o mesmo `index.html` de novo no mesmo navegador, os dados voltam sem precisar importar tudo novamente.
 
 Use o botão de pasta para carregar um backup `.json` e o botão de lixeira para limpar os dados salvos.
+
+## Banco na Vercel
+
+Para salvar na nuvem, configure em `Vercel > Project > Settings > Environment Variables`:
+
+- `DATABASE_URL`: Service URI do Postgres da Aiven, com `sslmode=require`.
+- `PG_CA_CERT`: opcional. Cole o CA certificate da Aiven se quiser validação SSL completa.
+
+Depois de salvar as variáveis, faça um redeploy na Vercel.
