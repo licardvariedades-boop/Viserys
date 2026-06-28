@@ -48,7 +48,7 @@ module.exports = async function handler(req, res) {
 function getPool() {
   if (!pool) {
     pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
+      connectionString: databaseUrlWithoutSslMode(),
       ssl: buildSslConfig(),
       max: 1,
       idleTimeoutMillis: 10000,
@@ -57,6 +57,12 @@ function getPool() {
   }
 
   return pool;
+}
+
+function databaseUrlWithoutSslMode() {
+  const url = new URL(process.env.DATABASE_URL);
+  url.searchParams.delete("sslmode");
+  return url.toString();
 }
 
 function buildSslConfig() {
