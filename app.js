@@ -244,7 +244,7 @@ async function handleLogin(event) {
     setLoggedInUi(data.user);
     await loadSessionFromDatabase();
   } catch (error) {
-    refs.loginError.textContent = error.message || "Usu·rio ou senha inv·lidos.";
+    refs.loginError.textContent = error.message || "Usuario ou senha invalidos.";
   } finally {
     refs.loginButton.disabled = false;
   }
@@ -325,7 +325,7 @@ async function loadSessionFromDatabase() {
     }
   } catch (error) {
     resetDashboardState();
-    updateHealth(error.message || "N„o consegui carregar o banco", "warning");
+    updateHealth(error.message || "Nao consegui carregar o banco", "warning");
   }
 }
 
@@ -337,7 +337,7 @@ async function saveSessionToDatabase() {
     updateHealth("Dados salvos no banco", "ready");
   } catch (error) {
     console.error(error);
-    updateHealth(error.message || "N„o consegui salvar no banco", "warning");
+    updateHealth(error.message || "Nao consegui salvar no banco", "warning");
   }
 }
 
@@ -1325,7 +1325,7 @@ function updateHealth(message = "", forcedClass = "") {
     return;
   }
 
-  panel.classList.add(state.platform || state.marketplace ? "warning" : "");
+  if (state.platform || state.marketplace) panel.classList.add("warning");
   panel.innerHTML = `<strong>Aguardando importa√ß√£o</strong><span>${escapeHtml(statusLine())}</span>`;
 }
 

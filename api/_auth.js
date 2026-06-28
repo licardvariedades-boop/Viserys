@@ -90,6 +90,10 @@ function sign(value) {
   return crypto.createHmac("sha256", sessionSecret()).update(value).digest("base64url");
 }
 
+function base64url(value) {
+  return Buffer.from(value, "utf8").toString("base64url");
+}
+
 function sessionSecret() {
   return process.env.APP_SESSION_SECRET || process.env.DATABASE_URL || "viserys-development-secret";
 }

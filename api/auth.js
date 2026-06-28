@@ -11,7 +11,7 @@ module.exports = async function handler(req, res) {
 
   if (req.method === "GET") {
     const user = getUserFromRequest(req);
-    if (!user) return send(res, 401, { ok: false, error: "Não autenticado." });
+    if (!user) return send(res, 200, { ok: false, authenticated: false });
     return send(res, 200, { ok: true, user });
   }
 
