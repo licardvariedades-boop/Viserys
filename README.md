@@ -34,17 +34,26 @@ Os botões do topo exportam:
 - Excel com abas `Resumo`, `Fechamento` e `Divergencias`.
 - CSV da aba visível na tabela.
 
-## Salvamento
+## Acesso e Salvamento
 
-Depois que uma planilha é importada, a sessão é salva automaticamente no armazenamento local do navegador. Ao abrir o mesmo `index.html` de novo no mesmo navegador, os dados voltam sem precisar importar tudo novamente.
+O dashboard exige login e salva os dados no Postgres. Não há mais sessão local nem chave privada por navegador.
 
-Use o botão de pasta para carregar um backup `.json` e o botão de lixeira para limpar os dados salvos.
+Usuário inicial:
+
+- `jones260`
+
+Senha inicial:
+
+- configure na Vercel como `APP_PASSWORD`.
 
 ## Banco na Vercel
 
 Para salvar na nuvem, configure em `Vercel > Project > Settings > Environment Variables`:
 
 - `DATABASE_URL`: Service URI do Postgres da Aiven, com `sslmode=require`.
+- `APP_USER`: `jones260`
+- `APP_PASSWORD`: senha do dashboard.
+- `APP_SESSION_SECRET`: qualquer texto longo e aleatório para assinar o cookie de login.
 - `PG_CA_CERT`: opcional. Cole o CA certificate da Aiven se quiser validação SSL completa.
 
 Depois de salvar as variáveis, faça um redeploy na Vercel.

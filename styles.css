@@ -88,6 +88,25 @@ h2 {
   display: none;
 }
 
+.account-pill {
+  display: inline-flex;
+  min-height: 42px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+  padding: 0 12px;
+  white-space: nowrap;
+}
+
+.account-pill.connected {
+  border-color: #afd5c2;
+  color: var(--green);
+}
+
 .icon-button {
   display: inline-grid;
   width: 42px;
@@ -253,6 +272,42 @@ h2 {
 .health-panel.warning {
   border-color: #e1bc7e;
   background: #fffaf0;
+}
+
+.login-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  background: rgba(244, 246, 244, 0.94);
+  padding: 20px;
+}
+
+.login-panel {
+  width: min(420px, 100%);
+  display: grid;
+  gap: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  padding: 24px;
+}
+
+.login-panel h2 {
+  font-size: 26px;
+}
+
+.login-button {
+  width: 100%;
+}
+
+.login-error {
+  min-height: 20px;
+  color: var(--red);
+  font-size: 13px;
+  font-weight: 750;
 }
 
 .cloud-band {

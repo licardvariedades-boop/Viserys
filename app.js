@@ -9,9 +9,8 @@ const state = {
   charts: {},
 };
 
-const SESSION_STORAGE_KEY = "mlDropshipDashboardSession:v1";
-const CLOUD_KEY_STORAGE_KEY = "mlDropshipDashboardCloudKey:v1";
-const CLOUD_SESSION_ENDPOINT = "/api/session";
+const AUTH_ENDPOINT = "/api/auth";
+const SESSION_ENDPOINT = "/api/session";
 const SESSION_DATE_FIELDS = ["date", "updatedAt", "platformDate", "marketplaceDate"];
 
 const BR_MONTHS = new Map([
@@ -54,15 +53,14 @@ document.addEventListener("DOMContentLoaded", () => {
     platformFileName: document.querySelector("#platformFileName"),
     marketplaceFileName: document.querySelector("#marketplaceFileName"),
     healthPanel: document.querySelector("#healthPanel"),
-    saveBackup: document.querySelector("#saveBackup"),
-    loadBackup: document.querySelector("#loadBackup"),
-    clearSaved: document.querySelector("#clearSaved"),
-    backupFile: document.querySelector("#backupFile"),
-    cloudKey: document.querySelector("#cloudKey"),
-    cloudSave: document.querySelector("#cloudSave"),
-    cloudLoad: document.querySelector("#cloudLoad"),
-    cloudDelete: document.querySelector("#cloudDelete"),
-    cloudStatus: document.querySelector("#cloudStatus"),
+    loginScreen: document.querySelector("#loginScreen"),
+    loginForm: document.querySelector("#loginForm"),
+    loginUser: document.querySelector("#loginUser"),
+    loginPassword: document.querySelector("#loginPassword"),
+    loginButton: document.querySelector("#loginButton"),
+    loginError: document.querySelector("#loginError"),
+    accountStatus: document.querySelector("#accountStatus"),
+    logoutButton: document.querySelector("#logoutButton"),
     exportXlsx: document.querySelector("#exportXlsx"),
     exportCsv: document.querySelector("#exportCsv"),
     periodPreset: document.querySelector("#periodPreset"),
@@ -111,14 +109,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
   refs.platformFile.addEventListener("change", (event) => handleFile("platform", event));
   refs.marketplaceFile.addEventListener("change", (event) => handleFile("marketplace", event));
-  refs.saveBackup.addEventListener("click", exportSessionBackup);
-  refs.loadBackup.addEventListener("click", () => refs.backupFile.click());
-  refs.clearSaved.addEventListener("click", clearSavedSession);
-  refs.backupFile.addEventListener("change", importSessionBackup);
-  refs.cloudKey.addEventListener("input", handleCloudKeyInput);
-  refs.cloudSave.addEventListener("click", saveSessionToCloud);
-  refs.cloudLoad.addEventListener("click", loadSessionFromCloud);
-  refs.cloudDelete.addEventListener("click", deleteCloudSession);
+  refs.loginForm.addEventListener("submit", handleLogin);
+  refs.logoutButton.addEventListener("click", handleLogout);
   refs.exportXlsx.addEventListener("click", exportWorkbook);
   refs.exportCsv.addEventListener("click", exportCsv);
   refs.periodPreset.addEventListener("change", () => {
@@ -140,14 +132,11 @@ document.addEventListener("DOMContentLoaded", () => {
   refs.periodPreset.value = "all";
   refs.onlyMatched.checked = true;
   refs.ignoreCanceled.checked = true;
-  refs.cloudKey.value = restoreCloudKey();
   syncFilterVisibility();
   setupCharts();
-  const restored = restoreSavedSession();
-  if (!restored) {
-    updateFilterOptions();
-    renderAll();
-  }
+  updateFilterOptions();
+  renderAll();
+  checkAuthAndLoad();
 
   if (window.lucide) {
     window.lucide.createIcons();
@@ -171,8 +160,8 @@ async function handleFile(type, event) {
     const workbook = await readWorkbook(file);
     const parsed = isPlatform ? parsePlatformWorkbook(workbook, file.name) : parseMarketplaceWorkbook(workbook, file.name);
     state[type] = parsed;
-    saveSessionToLocal();
     reconcile();
+    await saveSessionToDatabase();
   } catch (error) {
     console.error(error);
     state[type] = null;
@@ -229,103 +218,80 @@ function hasImportedData() {
   return Boolean(state.platform || state.marketplace || state.rows.length || state.mlOnly.length);
 }
 
-function hasSavedSession() {
+async function checkAuthAndLoad() {
+  setLoggedOutUi();
   try {
-    return Boolean(window.localStorage?.getItem(SESSION_STORAGE_KEY));
+    const auth = await authRequest("GET");
+    setLoggedInUi(auth.user);
+    await loadSessionFromDatabase();
   } catch {
-    return false;
+    resetDashboardState();
+    setLoggedOutUi();
   }
 }
 
-function saveSessionToLocal() {
-  if (!state.platform && !state.marketplace) return false;
+async function handleLogin(event) {
+  event.preventDefault();
+  refs.loginError.textContent = "";
+  refs.loginButton.disabled = true;
 
   try {
-    window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(buildSessionPayload()));
-    return true;
+    const data = await authRequest("POST", {
+      username: refs.loginUser.value,
+      password: refs.loginPassword.value,
+    });
+    refs.loginPassword.value = "";
+    setLoggedInUi(data.user);
+    await loadSessionFromDatabase();
   } catch (error) {
-    console.warn("Não foi possível salvar a sessão localmente.", error);
-    return false;
-  }
-}
-
-function restoreSavedSession() {
-  try {
-    const raw = window.localStorage?.getItem(SESSION_STORAGE_KEY);
-    if (!raw) return false;
-    const payload = JSON.parse(raw);
-    applySessionPayload(payload, { saveLocal: false });
-    return true;
-  } catch (error) {
-    console.warn("Não foi possível restaurar a sessão salva.", error);
-    return false;
-  }
-}
-
-function applySessionPayload(payload, options = {}) {
-  if (!payload || payload.version !== 1) {
-    throw new Error("Arquivo de sessão inválido.");
-  }
-
-  state.platform = unpackDataset(payload.platform, "platform");
-  state.marketplace = unpackDataset(payload.marketplace, "marketplace");
-
-  refs.platformFileName.textContent = state.platform?.fileName || "Nenhum arquivo selecionado";
-  refs.marketplaceFileName.textContent = state.marketplace?.fileName || "Nenhum arquivo selecionado";
-
-  if (options.saveLocal !== false) {
-    saveSessionToLocal();
-  }
-
-  if (state.platform && state.marketplace) {
-    reconcile();
-  } else {
-    state.rows = [];
-    state.mlOnly = [];
-    state.filteredClosing = [];
-    state.filteredDiffs = [];
-    updateFilterOptions();
-    renderAll();
-    updateHealth("Sessão carregada parcialmente", "warning");
-  }
-}
-
-function exportSessionBackup() {
-  const payload = buildSessionPayload();
-  const blob = new Blob([JSON.stringify(payload, null, 2)], {
-    type: "application/json;charset=utf-8",
-  });
-  const link = document.createElement("a");
-  link.href = URL.createObjectURL(blob);
-  link.download = `backup_fechamento_dropshipping_${dateStamp()}.json`;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(link.href);
-}
-
-async function importSessionBackup(event) {
-  const file = event.target.files?.[0];
-  if (!file) return;
-
-  try {
-    const payload = JSON.parse(await file.text());
-    applySessionPayload(payload);
-  } catch (error) {
-    console.error(error);
-    updateHealth("Não consegui carregar esse backup", "warning");
+    refs.loginError.textContent = error.message || "Usu�rio ou senha inv�lidos.";
   } finally {
-    event.target.value = "";
+    refs.loginButton.disabled = false;
   }
 }
 
-function clearSavedSession() {
+async function handleLogout() {
   try {
-    window.localStorage?.removeItem(SESSION_STORAGE_KEY);
-  } catch {
-    // Ignora bloqueios do navegador; o estado da tela ainda será limpo.
+    await fetch(`${AUTH_ENDPOINT}?action=logout`, { method: "POST" });
+  } finally {
+    resetDashboardState();
+    setLoggedOutUi();
   }
+}
 
+async function authRequest(method, body = null) {
+  const options = {
+    method,
+    headers: { "Content-Type": "application/json" },
+    credentials: "same-origin",
+  };
+  let url = AUTH_ENDPOINT;
+  if (body) options.body = JSON.stringify(body);
+
+  const response = await fetch(url, options);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data.ok === false) {
+    throw new Error(data.error || "Falha no acesso.");
+  }
+  return data;
+}
+
+function setLoggedInUi(user) {
+  refs.loginScreen.classList.add("hidden");
+  refs.accountStatus.textContent = user || "Conectado";
+  refs.accountStatus.classList.add("connected");
+  refs.logoutButton.disabled = false;
+  refs.loginError.textContent = "";
+}
+
+function setLoggedOutUi() {
+  refs.loginScreen.classList.remove("hidden");
+  refs.accountStatus.textContent = "Desconectado";
+  refs.accountStatus.classList.remove("connected");
+  refs.logoutButton.disabled = true;
+}
+
+function resetDashboardState() {
   state.platform = null;
   state.marketplace = null;
   state.rows = [];
@@ -347,113 +313,49 @@ function clearSavedSession() {
   updateHealth();
 }
 
-function restoreCloudKey() {
+async function loadSessionFromDatabase() {
   try {
-    return window.localStorage?.getItem(CLOUD_KEY_STORAGE_KEY) || "";
-  } catch {
-    return "";
-  }
-}
-
-function getCloudKey() {
-  return text(refs.cloudKey?.value);
-}
-
-function handleCloudKeyInput() {
-  const key = getCloudKey();
-  try {
-    if (key) {
-      window.localStorage?.setItem(CLOUD_KEY_STORAGE_KEY, key);
+    const data = await sessionRequest("GET");
+    if (data.payload) {
+      applySessionPayload(data.payload);
+      updateHealth("Dados carregados do banco", "ready");
     } else {
-      window.localStorage?.removeItem(CLOUD_KEY_STORAGE_KEY);
+      resetDashboardState();
+      updateHealth("Nenhuma planilha salva no banco", "warning");
     }
-  } catch {
-    // A chave continua funcionando na sessão atual mesmo se o navegador bloquear localStorage.
+  } catch (error) {
+    resetDashboardState();
+    updateHealth(error.message || "N�o consegui carregar o banco", "warning");
   }
-  updateCloudControls();
 }
 
-function updateCloudControls() {
-  if (!refs.cloudKey) return;
-  const hasKey = Boolean(getCloudKey());
-  const hasSessionData = hasImportedData();
-  refs.cloudSave.disabled = !hasKey || !hasSessionData;
-  refs.cloudLoad.disabled = !hasKey;
-  refs.cloudDelete.disabled = !hasKey;
-}
+async function saveSessionToDatabase() {
+  if (!hasImportedData()) return;
 
-function setCloudStatus(message, kind = "") {
-  if (!refs.cloudStatus) return;
-  refs.cloudStatus.textContent = message;
-  refs.cloudStatus.classList.toggle("ok", kind === "ok");
-  refs.cloudStatus.classList.toggle("warning", kind === "warning");
-}
-
-async function cloudRequest(method, body = null) {
-  const key = getCloudKey();
-  if (!key) {
-    throw new Error("Digite uma chave da nuvem.");
+  try {
+    await sessionRequest("POST", { payload: buildSessionPayload() });
+    updateHealth("Dados salvos no banco", "ready");
+  } catch (error) {
+    console.error(error);
+    updateHealth(error.message || "N�o consegui salvar no banco", "warning");
   }
+}
 
+async function sessionRequest(method, body = null) {
   const options = {
     method,
     headers: { "Content-Type": "application/json" },
+    credentials: "same-origin",
   };
-  let url = CLOUD_SESSION_ENDPOINT;
+  if (body) options.body = JSON.stringify(body);
 
-  if (method === "GET") {
-    url += `?key=${encodeURIComponent(key)}`;
-  } else {
-    options.body = JSON.stringify({ key, ...body });
-  }
-
-  const response = await fetch(url, options);
+  const response = await fetch(SESSION_ENDPOINT, options);
   const data = await response.json().catch(() => ({}));
   if (!response.ok || data.ok === false) {
-    throw new Error(data.error || "Falha na sincronização com a nuvem.");
+    throw new Error(data.error || "Falha ao acessar os dados salvos.");
   }
   return data;
 }
-
-async function saveSessionToCloud() {
-  if (!hasImportedData()) {
-    setCloudStatus("Importe as planilhas antes", "warning");
-    return;
-  }
-
-  setCloudStatus("Salvando...");
-  try {
-    await cloudRequest("POST", { payload: buildSessionPayload() });
-    setCloudStatus("Sessão salva na nuvem", "ok");
-  } catch (error) {
-    console.error(error);
-    setCloudStatus(error.message, "warning");
-  }
-}
-
-async function loadSessionFromCloud() {
-  setCloudStatus("Carregando...");
-  try {
-    const data = await cloudRequest("GET");
-    applySessionPayload(data.payload);
-    setCloudStatus("Sessão carregada da nuvem", "ok");
-  } catch (error) {
-    console.error(error);
-    setCloudStatus(error.message, "warning");
-  }
-}
-
-async function deleteCloudSession() {
-  setCloudStatus("Apagando...");
-  try {
-    await cloudRequest("DELETE");
-    setCloudStatus("Sessão apagada da nuvem", "ok");
-  } catch (error) {
-    console.error(error);
-    setCloudStatus(error.message, "warning");
-  }
-}
-
 async function readWorkbook(file) {
   const data = await file.arrayBuffer();
   return window.XLSX.read(data, {
@@ -950,10 +852,6 @@ function renderAll() {
   updateCharts();
   renderTable();
   const hasData = state.rows.length > 0 || state.mlOnly.length > 0;
-  const hasSessionData = hasImportedData();
-  refs.saveBackup.disabled = !hasSessionData;
-  refs.clearSaved.disabled = !hasSessionData && !hasSavedSession();
-  updateCloudControls();
   refs.exportXlsx.disabled = !hasData;
   refs.exportCsv.disabled = !hasData;
 }

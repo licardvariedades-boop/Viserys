@@ -1,5 +1,5 @@
-const crypto = require("crypto");
 const { Pool } = require("pg");
+const { getUserFromRequest } = require("./_auth");
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -14,6 +14,11 @@ let tableReady = false;
 module.exports = async function handler(req, res) {
   setJsonHeaders(res);
 
+  const username = getUserFromRequest(req);
+  if (!username) {
+    return send(res, 401, { ok: false, error: "Faça login para acessar os dados." });
+  }
+
   if (!process.env.DATABASE_URL) {
     return send(res, 500, {
       ok: false,
@@ -25,15 +30,15 @@ module.exports = async function handler(req, res) {
     await ensureTable();
 
     if (req.method === "GET") {
-      return getSession(req, res);
+      return getSession(req, res, username);
     }
 
     if (req.method === "POST") {
-      return saveSession(req, res);
+      return saveSession(req, res, username);
     }
 
     if (req.method === "DELETE") {
-      return deleteSession(req, res);
+      return deleteSession(req, res, username);
     }
 
     return send(res, 405, { ok: false, error: "Método não permitido." });
@@ -69,8 +74,8 @@ async function ensureTable() {
   if (tableReady) return;
 
   await pool.query(`
-    create table if not exists dashboard_sessions (
-      session_key_hash text primary key,
+    create table if not exists dashboard_user_sessions (
+      username text primary key,
       payload jsonb not null,
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now()
@@ -80,19 +85,14 @@ async function ensureTable() {
   tableReady = true;
 }
 
-async function getSession(req, res) {
-  const key = normalizeKey(req.query.key);
-  if (!key) {
-    return send(res, 400, { ok: false, error: "Chave da nuvem obrigatória." });
-  }
-
+async function getSession(req, res, username) {
   const result = await pool.query(
-    "select payload, updated_at from dashboard_sessions where session_key_hash = $1",
-    [hashKey(key)]
+    "select payload, updated_at from dashboard_user_sessions where username = $1",
+    [username]
   );
 
   if (!result.rowCount) {
-    return send(res, 404, { ok: false, error: "Nenhuma sessão encontrada para essa chave." });
+    return send(res, 200, { ok: true, payload: null });
   }
 
   return send(res, 200, {
@@ -102,14 +102,9 @@ async function getSession(req, res) {
   });
 }
 
-async function saveSession(req, res) {
+async function saveSession(req, res, username) {
   const body = await readBody(req);
-  const key = normalizeKey(body.key);
   const payload = body.payload;
-
-  if (!key) {
-    return send(res, 400, { ok: false, error: "Chave da nuvem obrigatória." });
-  }
 
   if (!payload || payload.version !== 1) {
     return send(res, 400, { ok: false, error: "Sessão inválida." });
@@ -117,26 +112,19 @@ async function saveSession(req, res) {
 
   await pool.query(
     `
-      insert into dashboard_sessions (session_key_hash, payload, updated_at)
+      insert into dashboard_user_sessions (username, payload, updated_at)
       values ($1, $2::jsonb, now())
-      on conflict (session_key_hash)
+      on conflict (username)
       do update set payload = excluded.payload, updated_at = now()
     `,
-    [hashKey(key), JSON.stringify(payload)]
+    [username, JSON.stringify(payload)]
   );
 
   return send(res, 200, { ok: true });
 }
 
-async function deleteSession(req, res) {
-  const body = await readBody(req);
-  const key = normalizeKey(body.key);
-
-  if (!key) {
-    return send(res, 400, { ok: false, error: "Chave da nuvem obrigatória." });
-  }
-
-  await pool.query("delete from dashboard_sessions where session_key_hash = $1", [hashKey(key)]);
+async function deleteSession(req, res, username) {
+  await pool.query("delete from dashboard_user_sessions where username = $1", [username]);
   return send(res, 200, { ok: true });
 }
 
@@ -156,12 +144,4 @@ async function readBody(req) {
 
   const raw = Buffer.concat(chunks).toString("utf8");
   return raw ? JSON.parse(raw) : {};
-}
-
-function normalizeKey(key) {
-  return String(key || "").trim();
-}
-
-function hashKey(key) {
-  return crypto.createHash("sha256").update(key).digest("hex");
 }

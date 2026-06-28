@@ -17,14 +17,9 @@
         <h1>Dropshipping + Mercado Livre</h1>
       </div>
       <div class="topbar-actions">
-        <button class="icon-button" id="saveBackup" type="button" disabled title="Salvar backup da sessão">
-          <i data-lucide="save"></i>
-        </button>
-        <button class="icon-button" id="loadBackup" type="button" title="Carregar backup da sessão">
-          <i data-lucide="folder-open"></i>
-        </button>
-        <button class="icon-button" id="clearSaved" type="button" disabled title="Limpar dados salvos">
-          <i data-lucide="trash-2"></i>
+        <span class="account-pill" id="accountStatus">Desconectado</span>
+        <button class="icon-button" id="logoutButton" type="button" disabled title="Sair">
+          <i data-lucide="log-out"></i>
         </button>
         <button class="icon-button" id="exportXlsx" type="button" disabled title="Baixar Excel">
           <i data-lucide="file-spreadsheet"></i>
@@ -32,9 +27,27 @@
         <button class="icon-button" id="exportCsv" type="button" disabled title="Baixar CSV">
           <i data-lucide="download"></i>
         </button>
-        <input class="session-file" id="backupFile" type="file" accept=".json,application/json" />
       </div>
     </header>
+
+    <section class="login-screen" id="loginScreen">
+      <form class="login-panel" id="loginForm">
+        <p class="eyebrow">Acesso restrito</p>
+        <h2>Entrar no dashboard</h2>
+        <div class="field">
+          <label for="loginUser">Usuário</label>
+          <input id="loginUser" type="text" autocomplete="username" required />
+        </div>
+        <div class="field">
+          <label for="loginPassword">Senha</label>
+          <input id="loginPassword" type="password" autocomplete="current-password" required />
+        </div>
+        <button class="action-button login-button" id="loginButton" type="submit">
+          <i data-lucide="log-in"></i>Entrar
+        </button>
+        <div class="login-error" id="loginError"></div>
+      </form>
+    </section>
 
     <main class="app-shell">
       <section class="import-band" aria-label="Importação">
@@ -62,25 +75,6 @@
           <strong>Aguardando importação</strong>
           <span>Os indicadores aparecem assim que as duas planilhas forem carregadas.</span>
         </div>
-      </section>
-
-      <section class="cloud-band" aria-label="Nuvem">
-        <div class="field cloud-key-field">
-          <label for="cloudKey">Chave da nuvem</label>
-          <input id="cloudKey" type="password" autocomplete="off" placeholder="Digite uma chave privada" />
-        </div>
-        <div class="cloud-actions">
-          <button class="action-button" id="cloudSave" type="button" disabled>
-            <i data-lucide="cloud-upload"></i>Salvar nuvem
-          </button>
-          <button class="action-button" id="cloudLoad" type="button" disabled>
-            <i data-lucide="cloud-download"></i>Carregar nuvem
-          </button>
-          <button class="icon-button" id="cloudDelete" type="button" disabled title="Apagar sessão da nuvem">
-            <i data-lucide="cloud-off"></i>
-          </button>
-        </div>
-        <div class="cloud-status" id="cloudStatus">Sem sincronização</div>
       </section>
 
       <section class="filters" aria-label="Filtros">
