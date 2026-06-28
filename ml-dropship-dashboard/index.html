@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fechamento Dropshipping Mercado Livre</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js" defer></script>
+    <script src="https://unpkg.com/lucide@latest" defer></script>
+    <script src="./app.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Fechamento financeiro</p>
+        <h1>Dropshipping + Mercado Livre</h1>
+      </div>
+      <div class="topbar-actions">
+        <button class="icon-button" id="saveBackup" type="button" disabled title="Salvar backup da sessão">
+          <i data-lucide="save"></i>
+        </button>
+        <button class="icon-button" id="loadBackup" type="button" title="Carregar backup da sessão">
+          <i data-lucide="folder-open"></i>
+        </button>
+        <button class="icon-button" id="clearSaved" type="button" disabled title="Limpar dados salvos">
+          <i data-lucide="trash-2"></i>
+        </button>
+        <button class="icon-button" id="exportXlsx" type="button" disabled title="Baixar Excel">
+          <i data-lucide="file-spreadsheet"></i>
+        </button>
+        <button class="icon-button" id="exportCsv" type="button" disabled title="Baixar CSV">
+          <i data-lucide="download"></i>
+        </button>
+        <input class="session-file" id="backupFile" type="file" accept=".json,application/json" />
+      </div>
+    </header>
+
+    <main class="app-shell">
+      <section class="import-band" aria-label="Importação">
+        <label class="upload-tile" for="platformFile">
+          <input id="platformFile" type="file" accept=".xlsx,.xls,.csv" />
+          <span class="upload-icon"><i data-lucide="package-check"></i></span>
+          <span>
+            <strong>Planilha de pedidos</strong>
+            <small id="platformFileName">Nenhum arquivo selecionado</small>
+            <span class="upload-cta"><i data-lucide="upload"></i>Selecionar arquivo</span>
+          </span>
+        </label>
+
+        <label class="upload-tile" for="marketplaceFile">
+          <input id="marketplaceFile" type="file" accept=".xlsx,.xls,.csv" />
+          <span class="upload-icon"><i data-lucide="badge-dollar-sign"></i></span>
+          <span>
+            <strong>Relatório Mercado Livre</strong>
+            <small id="marketplaceFileName">Nenhum arquivo selecionado</small>
+            <span class="upload-cta"><i data-lucide="upload"></i>Selecionar arquivo</span>
+          </span>
+        </label>
+
+        <div class="health-panel" id="healthPanel">
+          <strong>Aguardando importação</strong>
+          <span>Os indicadores aparecem assim que as duas planilhas forem carregadas.</span>
+        </div>
+      </section>
+
+      <section class="filters" aria-label="Filtros">
+        <div class="field">
+          <label for="periodPreset">Período</label>
+          <select id="periodPreset">
+            <option value="all">Todo o período</option>
+            <option value="month">Mês</option>
+            <option value="custom">Datas</option>
+          </select>
+        </div>
+        <div class="field" id="monthField">
+          <label for="monthFilter">Mês</label>
+          <select id="monthFilter"></select>
+        </div>
+        <div class="field" id="startField">
+          <label for="startDate">Início</label>
+          <input id="startDate" type="date" />
+        </div>
+        <div class="field" id="endField">
+          <label for="endDate">Fim</label>
+          <input id="endDate" type="date" />
+        </div>
+        <div class="field">
+          <label for="statusFilter">Status</label>
+          <select id="statusFilter"></select>
+        </div>
+        <div class="field search-field">
+          <label for="productSearch">Produto</label>
+          <input id="productSearch" type="search" placeholder="Buscar produto, SKU ou venda" />
+        </div>
+        <label class="switch">
+          <input id="onlyMatched" type="checkbox" checked />
+          <span></span>
+          <strong>Conciliados</strong>
+        </label>
+        <label class="switch">
+          <input id="ignoreCanceled" type="checkbox" checked />
+          <span></span>
+          <strong>Sem canceladas</strong>
+        </label>
+      </section>
+
+      <section class="kpi-grid" aria-label="Indicadores">
+        <article class="kpi-card">
+          <span>Recebido líquido</span>
+          <strong id="kpiNet">R$ 0,00</strong>
+          <small id="kpiNetSub">0 vendas</small>
+        </article>
+        <article class="kpi-card">
+          <span>Custo de produtos</span>
+          <strong id="kpiCost">R$ 0,00</strong>
+          <small id="kpiCostSub">base conciliada</small>
+        </article>
+        <article class="kpi-card">
+          <span>Lucro líquido</span>
+          <strong id="kpiProfit">R$ 0,00</strong>
+          <small id="kpiProfitSub">0,00% margem</small>
+        </article>
+        <article class="kpi-card">
+          <span>ROI</span>
+          <strong id="kpiRoi">0,00%</strong>
+          <small id="kpiTicket">Ticket médio R$ 0,00</small>
+        </article>
+      </section>
+
+      <section class="chart-grid" aria-label="Gráficos">
+        <article class="chart-panel wide">
+          <header>
+            <h2>Evolução diária</h2>
+            <span id="dailyHint">Receita, custo e lucro</span>
+          </header>
+          <div class="chart-box"><canvas id="dailyChart"></canvas></div>
+        </article>
+        <article class="chart-panel">
+          <header>
+            <h2>Resultado por status</h2>
+            <span>Lucro líquido</span>
+          </header>
+          <div class="chart-box"><canvas id="statusChart"></canvas></div>
+        </article>
+        <article class="chart-panel">
+          <header>
+            <h2>Top produtos</h2>
+            <span>Maior lucro</span>
+          </header>
+          <div class="chart-box"><canvas id="productChart"></canvas></div>
+        </article>
+      </section>
+
+      <section class="split-section">
+        <article class="summary-panel">
+          <header>
+            <h2>Conciliação</h2>
+            <span id="matchRate">0% localizado</span>
+          </header>
+          <div class="reconcile-grid">
+            <div>
+              <strong id="matchedCount">0</strong>
+              <span>Vendas conciliadas</span>
+            </div>
+            <div>
+              <strong id="platformMissingCount">0</strong>
+              <span>Pedidos sem Mercado Livre</span>
+            </div>
+            <div>
+              <strong id="marketMissingCount">0</strong>
+              <span>Mercado Livre sem pedido</span>
+            </div>
+            <div>
+              <strong id="cancelledCount">0</strong>
+              <span>Canceladas</span>
+            </div>
+          </div>
+        </article>
+
+        <article class="summary-panel">
+          <header>
+            <h2>Componentes Mercado Livre</h2>
+            <span>Todas as colunas de valor</span>
+          </header>
+          <div class="money-breakdown">
+            <div><span>Receita por produtos</span><strong id="grossProductTotal">R$ 0,00</strong></div>
+            <div><span>Acréscimo comprador</span><strong id="priceIncreaseTotal">R$ 0,00</strong></div>
+            <div><span>Tarifa venda/impostos</span><strong id="saleFeeTotal">R$ 0,00</strong></div>
+            <div><span>Taxa parcelamento</span><strong id="installmentFeeTotal">R$ 0,00</strong></div>
+            <div><span>Receita de envio</span><strong id="shippingIncomeTotal">R$ 0,00</strong></div>
+            <div><span>Custos/tarifas envio</span><strong id="shippingCostsTotal">R$ 0,00</strong></div>
+            <div><span>Envio declarado</span><strong id="declaredShippingTotal">R$ 0,00</strong></div>
+            <div><span>Dif. medida/peso</span><strong id="shippingDifferenceTotal">R$ 0,00</strong></div>
+            <div><span>Descontos e bônus</span><strong id="discountTotal">R$ 0,00</strong></div>
+            <div><span>Cancelamentos</span><strong id="refundTotal">R$ 0,00</strong></div>
+            <div><span>Total líquido ML</span><strong id="netComponentTotal">R$ 0,00</strong></div>
+            <div><span>Diferença conferência</span><strong id="checkDiffTotal">R$ 0,00</strong></div>
+          </div>
+        </article>
+      </section>
+
+      <section class="table-section" aria-label="Fechamento">
+        <div class="table-header">
+          <div>
+            <h2>Fechamento por venda</h2>
+            <span id="tableCount">0 registros</span>
+          </div>
+          <div class="tab-buttons" role="tablist">
+            <button id="tabClosing" type="button" class="active">Fechamento</button>
+            <button id="tabDiff" type="button">Divergências</button>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead id="resultHead"></thead>
+            <tbody id="resultBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
