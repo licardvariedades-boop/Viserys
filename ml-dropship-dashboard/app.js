@@ -1,6 +1,7 @@
 const state = {
   analyses: [],
   manualAdjustments: {},
+  taxRate: 0,
   platform: null,
   marketplace: null,
   rows: [],
@@ -83,6 +84,7 @@ document.addEventListener("DOMContentLoaded", () => {
     endDate: document.querySelector("#endDate"),
     statusFilter: document.querySelector("#statusFilter"),
     productSearch: document.querySelector("#productSearch"),
+    taxRate: document.querySelector("#taxRate"),
     onlyMatched: document.querySelector("#onlyMatched"),
     ignoreCanceled: document.querySelector("#ignoreCanceled"),
     kpiNet: document.querySelector("#kpiNet"),
@@ -114,8 +116,10 @@ document.addEventListener("DOMContentLoaded", () => {
     tableCount: document.querySelector("#tableCount"),
     productSummaryCount: document.querySelector("#productSummaryCount"),
     productSummaryBody: document.querySelector("#productSummaryBody"),
+    tableTitle: document.querySelector("#tableTitle"),
     tabClosing: document.querySelector("#tabClosing"),
     tabDiff: document.querySelector("#tabDiff"),
+    tabTax: document.querySelector("#tabTax"),
     resultHead: document.querySelector("#resultHead"),
     resultBody: document.querySelector("#resultBody"),
   };
@@ -148,6 +152,9 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   refs.tabClosing.addEventListener("click", () => setTab("closing"));
   refs.tabDiff.addEventListener("click", () => setTab("diff"));
+  refs.tabTax.addEventListener("click", () => setTab("tax"));
+  refs.taxRate.addEventListener("input", handleTaxRateInput);
+  refs.taxRate.addEventListener("blur", syncTaxRateInput);
   refs.resultBody.addEventListener("input", handleDiffAdjustmentInput);
   refs.resultBody.addEventListener("blur", handleDiffAdjustmentBlur, true);
   refs.productSummaryBody.addEventListener("click", handleProductSummaryClick);
@@ -203,6 +210,7 @@ function buildSessionPayload() {
     savedAt: new Date().toISOString(),
     analyses: state.analyses.map(packAnalysis),
     manualAdjustments: packManualAdjustments(),
+    taxRate: state.taxRate,
   };
 }
 
@@ -326,6 +334,8 @@ function syncDraftState() {
 
 function applySessionPayload(payload) {
   state.manualAdjustments = normalizeManualAdjustments(payload?.manualAdjustments);
+  state.taxRate = normalizeTaxRate(payload?.taxRate);
+  syncTaxRateInput();
 
   const savedAnalyses = Array.isArray(payload?.analyses)
     ? payload.analyses
@@ -432,6 +442,7 @@ function setLoggedOutUi() {
 function resetDashboardState() {
   state.analyses = [];
   state.manualAdjustments = {};
+  state.taxRate = 0;
   state.expandedProducts.clear();
   state.platform = null;
   state.marketplace = null;
@@ -448,6 +459,7 @@ function resetDashboardState() {
   refs.analysisFilter.value = "all";
   refs.statusFilter.value = "all";
   refs.productSearch.value = "";
+  syncTaxRateInput();
   refs.onlyMatched.checked = true;
   refs.ignoreCanceled.checked = true;
   syncFilterVisibility();
@@ -1119,6 +1131,79 @@ function renderBreakdown() {
   refs.checkDiffTotal.textContent = formatMoney(sum(rows, "checkDiff"));
 }
 
+function taxSummaryRows(rows = state.filteredClosing) {
+  const map = new Map();
+  rows.forEach((row) => {
+    const key = monthKey(row.date) || "sem-data";
+    if (!map.has(key)) {
+      map.set(key, {
+        key,
+        label: key === "sem-data" ? "Sem mês" : monthLabel(key),
+        sales: 0,
+        gross: 0,
+        netReceived: 0,
+        tax: 0,
+        afterTax: 0,
+      });
+    }
+
+    const item = map.get(key);
+    item.sales += 1;
+    item.gross += taxGrossValue(row);
+    item.netReceived += Number(row.netReceived) || 0;
+  });
+
+  return [...map.values()]
+    .map((item) => {
+      const tax = item.gross * taxRateDecimal();
+      return {
+        ...item,
+        tax,
+        afterTax: item.gross - tax,
+      };
+    })
+    .sort((a, b) => a.key.localeCompare(b.key));
+}
+
+function taxSummaryTotal(rows = taxSummaryRows()) {
+  return rows.reduce((total, row) => {
+    total.sales += row.sales;
+    total.gross += row.gross;
+    total.netReceived += row.netReceived;
+    total.tax += row.tax;
+    total.afterTax += row.afterTax;
+    return total;
+  }, {
+    sales: 0,
+    gross: 0,
+    netReceived: 0,
+    tax: 0,
+    afterTax: 0,
+  });
+}
+
+function taxGrossValue(row) {
+  const gross = (Number(row.grossProduct) || 0)
+    + (Number(row.priceIncrease) || 0)
+    + (Number(row.shippingIncome) || 0);
+  return gross || Number(row.netReceived) || 0;
+}
+
+function taxRateDecimal() {
+  return normalizeTaxRate(state.taxRate) / 100;
+}
+
+function handleTaxRateInput() {
+  state.taxRate = normalizeTaxRate(parseMoney(refs.taxRate.value));
+  renderAll();
+  scheduleSessionSave("Alíquota salva no banco");
+}
+
+function syncTaxRateInput() {
+  if (!refs.taxRate) return;
+  refs.taxRate.value = formatEditableMoney(normalizeTaxRate(state.taxRate));
+}
+
 function renderProductSummary() {
   if (!refs.productSummaryBody) return;
 
@@ -1257,15 +1342,14 @@ function productSummaryRows(rows) {
 }
 
 function renderTable() {
-  if (state.activeTab === "closing") {
-    renderClosingTable();
-  } else {
-    renderDiffTable();
-  }
+  if (state.activeTab === "closing") return renderClosingTable();
+  if (state.activeTab === "diff") return renderDiffTable();
+  return renderTaxTable();
 }
 
 function renderClosingTable() {
   const rows = [...state.filteredClosing].sort(sortByDateDesc);
+  refs.tableTitle.textContent = "Fechamento por venda";
   refs.tableCount.textContent = `${formatInteger(rows.length)} registros`;
   refs.resultHead.innerHTML = `
     <tr>
@@ -1327,6 +1411,7 @@ function renderClosingTable() {
 
 function renderDiffTable() {
   const rows = [...state.filteredDiffs].sort(sortByDateDesc);
+  refs.tableTitle.textContent = "Divergências";
   refs.tableCount.textContent = `${formatInteger(rows.length)} divergências`;
   refs.resultHead.innerHTML = `
     <tr>
@@ -1369,6 +1454,54 @@ function renderDiffTable() {
       </tr>
     `;
   }).join("");
+}
+
+function renderTaxTable() {
+  const rows = taxSummaryRows();
+  const totals = taxSummaryTotal(rows);
+  refs.tableTitle.textContent = "Impostos";
+  refs.tableCount.textContent = `${formatInteger(rows.length)} ${rows.length === 1 ? "mês" : "meses"}`;
+  refs.resultHead.innerHTML = `
+    <tr>
+      <th>Mês</th>
+      <th class="money">Vendas</th>
+      <th class="money">Valor bruto</th>
+      <th class="money">Recebido líquido</th>
+      <th class="money">Alíquota</th>
+      <th class="money">Imposto governo</th>
+      <th class="money">Bruto após imposto</th>
+    </tr>
+  `;
+
+  if (!rows.length) {
+    refs.resultBody.innerHTML = `<tr><td colspan="7" class="empty-state">Sem valores para os filtros atuais.</td></tr>`;
+    return;
+  }
+
+  refs.resultBody.innerHTML = [
+    ...rows.map((row) => `
+      <tr>
+        <td><strong>${escapeHtml(row.label)}</strong></td>
+        <td class="money">${formatInteger(row.sales)}</td>
+        <td class="money">${formatMoney(row.gross)}</td>
+        <td class="money">${formatMoney(row.netReceived)}</td>
+        <td class="money">${formatTaxRate(state.taxRate)}</td>
+        <td class="money negative">${formatMoney(row.tax)}</td>
+        <td class="money">${formatMoney(row.afterTax)}</td>
+      </tr>
+    `),
+    `
+      <tr class="total-row">
+        <td><strong>Total filtrado</strong></td>
+        <td class="money">${formatInteger(totals.sales)}</td>
+        <td class="money">${formatMoney(totals.gross)}</td>
+        <td class="money">${formatMoney(totals.netReceived)}</td>
+        <td class="money">${formatTaxRate(state.taxRate)}</td>
+        <td class="money negative">${formatMoney(totals.tax)}</td>
+        <td class="money">${formatMoney(totals.afterTax)}</td>
+      </tr>
+    `,
+  ].join("");
 }
 
 function renderMoneyEditor(row, field) {
@@ -1469,6 +1602,16 @@ function sameMoney(left, right) {
   return Math.abs(round2(left) - round2(right)) < 0.01;
 }
 
+function normalizeTaxRate(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) return 0;
+  return Math.min(round2(number), 100);
+}
+
+function formatTaxRate(value) {
+  return `${formatEditableMoney(normalizeTaxRate(value))}%`;
+}
+
 function formatEditableMoney(value) {
   return round2(value).toLocaleString("pt-BR", {
     minimumFractionDigits: 2,
@@ -1480,6 +1623,7 @@ function setTab(tab) {
   state.activeTab = tab;
   refs.tabClosing.classList.toggle("active", tab === "closing");
   refs.tabDiff.classList.toggle("active", tab === "diff");
+  refs.tabTax.classList.toggle("active", tab === "tax");
   renderTable();
 }
 
@@ -1691,6 +1835,7 @@ function exportWorkbook() {
   if (!window.XLSX) return;
 
   const metrics = currentMetrics();
+  const taxTotals = taxSummaryTotal();
   const selectedAnalysis = state.analyses.find((analysis) => analysis.id === refs.analysisFilter?.value);
   const cancelledIgnored = refs.ignoreCanceled?.checked
     ? [...state.rows, ...state.mlOnly].filter((row) => isCancelled(row) && matchesFilters(row, false, false)).length
@@ -1708,12 +1853,16 @@ function exportWorkbook() {
     ["Lucro líquido", round2(metrics.profit)],
     ["Margem", round2(metrics.margin)],
     ["ROI", round2(metrics.roi)],
+    ["Valor bruto fiscal", round2(taxTotals.gross)],
+    ["Aliquota imposto", formatTaxRate(state.taxRate)],
+    ["Imposto governo", round2(taxTotals.tax)],
     ["Pedidos sem Mercado Livre", state.filteredDiffs.filter((row) => row.source === "platform").length],
     ["Mercado Livre sem pedido", state.filteredDiffs.filter((row) => row.source === "marketplace").length],
   ];
 
   const wb = window.XLSX.utils.book_new();
   window.XLSX.utils.book_append_sheet(wb, window.XLSX.utils.aoa_to_sheet(summary), "Resumo");
+  window.XLSX.utils.book_append_sheet(wb, window.XLSX.utils.json_to_sheet(taxSummaryRows().map(toTaxExportRow)), "Impostos");
   window.XLSX.utils.book_append_sheet(wb, window.XLSX.utils.json_to_sheet(productSummaryRows(state.filteredClosing).map(toProductExportRow)), "Produtos");
   window.XLSX.utils.book_append_sheet(wb, window.XLSX.utils.json_to_sheet(state.filteredClosing.map(toExportRow)), "Fechamento");
   window.XLSX.utils.book_append_sheet(wb, window.XLSX.utils.json_to_sheet(state.filteredDiffs.map(toExportRow)), "Divergencias");
@@ -1722,17 +1871,28 @@ function exportWorkbook() {
 
 function exportCsv() {
   if (!window.XLSX) return;
-  const rows = state.activeTab === "closing" ? state.filteredClosing : state.filteredDiffs;
-  const sheet = window.XLSX.utils.json_to_sheet(rows.map(toExportRow));
+  const rows = exportRowsForActiveTab();
+  const sheet = window.XLSX.utils.json_to_sheet(rows);
   const csv = "\uFEFF" + window.XLSX.utils.sheet_to_csv(sheet);
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
   const link = document.createElement("a");
   link.href = URL.createObjectURL(blob);
-  link.download = `${state.activeTab === "closing" ? "fechamento" : "divergencias"}_${dateStamp()}.csv`;
+  link.download = `${activeExportName()}_${dateStamp()}.csv`;
   document.body.appendChild(link);
   link.click();
   link.remove();
   URL.revokeObjectURL(link.href);
+}
+
+function exportRowsForActiveTab() {
+  if (state.activeTab === "tax") return taxSummaryRows().map(toTaxExportRow);
+  const rows = state.activeTab === "closing" ? state.filteredClosing : state.filteredDiffs;
+  return rows.map(toExportRow);
+}
+
+function activeExportName() {
+  if (state.activeTab === "tax") return "impostos";
+  return state.activeTab === "closing" ? "fechamento" : "divergencias";
 }
 
 function toExportRow(row) {
@@ -1776,6 +1936,18 @@ function toProductExportRow(item) {
     "Custo Produto": round2(item.cost),
     "Lucro Liquido": round2(item.profit),
     "Margem": round2(item.margin),
+  };
+}
+
+function toTaxExportRow(item) {
+  return {
+    "Mes": item.label,
+    "Vendas": item.sales,
+    "Valor Bruto": round2(item.gross),
+    "Recebido Liquido": round2(item.netReceived),
+    "Aliquota Imposto": formatTaxRate(state.taxRate),
+    "Imposto Governo": round2(item.tax),
+    "Bruto Apos Imposto": round2(item.afterTax),
   };
 }
 

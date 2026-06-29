@@ -130,6 +130,10 @@
           <label for="productSearch">Produto</label>
           <input id="productSearch" type="search" placeholder="Buscar produto, SKU ou venda" />
         </div>
+        <div class="field tax-rate-field">
+          <label for="taxRate">Imposto %</label>
+          <input id="taxRate" type="text" inputmode="decimal" value="0,00" />
+        </div>
         <label class="switch">
           <input id="onlyMatched" type="checkbox" checked />
           <span></span>
@@ -270,12 +274,13 @@
       <section class="table-section" aria-label="Fechamento">
         <div class="table-header">
           <div>
-            <h2>Fechamento por venda</h2>
+            <h2 id="tableTitle">Fechamento por venda</h2>
             <span id="tableCount">0 registros</span>
           </div>
           <div class="tab-buttons" role="tablist">
             <button id="tabClosing" type="button" class="active">Fechamento</button>
             <button id="tabDiff" type="button">Divergências</button>
+            <button id="tabTax" type="button">Impostos</button>
           </div>
         </div>
 

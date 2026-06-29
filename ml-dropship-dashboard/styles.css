@@ -415,6 +415,14 @@ h2 {
   box-shadow: 0 0 0 3px rgba(22, 121, 76, 0.14);
 }
 
+.tax-rate-field {
+  max-width: 130px;
+}
+
+.tax-rate-field input {
+  text-align: right;
+}
+
 .switch {
   display: inline-flex;
   height: 40px;
@@ -753,6 +761,11 @@ th.money {
 .money-editor.adjusted {
   border-color: rgba(22, 121, 76, 0.58);
   background: #f5fbf7;
+}
+
+.total-row td {
+  background: #f8faf8;
+  font-weight: 800;
 }
 
 .status-pill {
