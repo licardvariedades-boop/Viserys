@@ -671,6 +671,61 @@ th.money {
   white-space: nowrap;
 }
 
+.sales-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.summary-toggle {
+  display: inline-grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border: 1px solid #cfd8d2;
+  border-radius: 6px;
+  background: #fff;
+  color: var(--green);
+  cursor: pointer;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 850;
+  line-height: 1;
+}
+
+.summary-toggle:hover,
+.summary-toggle:focus-visible {
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px rgba(22, 121, 76, 0.14);
+  outline: none;
+}
+
+.product-detail-row > td {
+  background: #f8faf8;
+  padding: 0;
+}
+
+.product-order-list {
+  overflow-x: auto;
+  padding: 10px 13px 14px;
+}
+
+.product-order-list table {
+  min-width: 720px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.product-order-list th {
+  position: static;
+}
+
+.product-order-list td,
+.product-order-list th {
+  padding: 9px 11px;
+}
+
 .editable-money-cell {
   min-width: 130px;
 }

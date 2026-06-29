@@ -8,6 +8,7 @@ const state = {
   filteredClosing: [],
   filteredDiffs: [],
   activeTab: "closing",
+  expandedProducts: new Set(),
   charts: {},
 };
 
@@ -149,6 +150,7 @@ document.addEventListener("DOMContentLoaded", () => {
   refs.tabDiff.addEventListener("click", () => setTab("diff"));
   refs.resultBody.addEventListener("input", handleDiffAdjustmentInput);
   refs.resultBody.addEventListener("blur", handleDiffAdjustmentBlur, true);
+  refs.productSummaryBody.addEventListener("click", handleProductSummaryClick);
 
   refs.periodPreset.value = "all";
   refs.onlyMatched.checked = true;
@@ -430,6 +432,7 @@ function setLoggedOutUi() {
 function resetDashboardState() {
   state.analyses = [];
   state.manualAdjustments = {};
+  state.expandedProducts.clear();
   state.platform = null;
   state.marketplace = null;
   state.rows = [];
@@ -1120,6 +1123,7 @@ function renderProductSummary() {
   if (!refs.productSummaryBody) return;
 
   const products = productSummaryRows(state.filteredClosing);
+  const visibleProducts = products.slice(0, 60);
   refs.productSummaryCount.textContent = `${formatInteger(products.length)} ${products.length === 1 ? "produto" : "produtos"}`;
 
   if (!products.length) {
@@ -1127,19 +1131,95 @@ function renderProductSummary() {
     return;
   }
 
-  refs.productSummaryBody.innerHTML = products.slice(0, 60).map((item) => `
+  refs.productSummaryBody.innerHTML = visibleProducts.map(renderProductSummaryRow).join("");
+}
+
+function renderProductSummaryRow(item) {
+  const expanded = state.expandedProducts.has(item.key);
+  const toggleLabel = expanded ? "Ocultar pedidos" : "Mostrar pedidos";
+
+  return `
     <tr class="${item.profit >= 0 ? "profit-row" : "loss-row"}">
       <td>
         <strong>${escapeHtml(item.label)}</strong>
         <small>${escapeHtml(`${formatInteger(item.sales)} vendas`)}</small>
       </td>
-      <td class="money">${formatInteger(item.sales)}</td>
+      <td class="money">
+        <div class="sales-toggle">
+          <span>${formatInteger(item.sales)}</span>
+          <button
+            class="summary-toggle"
+            type="button"
+            aria-label="${escapeAttribute(`${toggleLabel} de ${item.label}`)}"
+            aria-expanded="${expanded ? "true" : "false"}"
+            data-product-key="${escapeAttribute(item.key)}"
+          >${expanded ? "-" : "+"}</button>
+        </div>
+      </td>
       <td class="money">${formatMoney(item.netReceived)}</td>
       <td class="money">${formatMoney(item.cost)}</td>
       <td class="money ${item.profit >= 0 ? "positive" : "negative"}">${formatMoney(item.profit)}</td>
       <td class="money ${item.margin >= 0 ? "positive" : "negative"}">${formatPercent(item.margin)}</td>
     </tr>
-  `).join("");
+    ${expanded ? renderProductOrderDetails(item) : ""}
+  `;
+}
+
+function renderProductOrderDetails(item) {
+  return `
+    <tr class="product-detail-row">
+      <td colspan="6">
+        <div class="product-order-list">
+          <table>
+            <thead>
+              <tr>
+                <th>Pedido</th>
+                <th>Data</th>
+                <th class="money">Valor pago</th>
+                <th class="money">Valor recebido</th>
+                <th class="money">Lucro</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${item.orders.map(renderProductOrderRow).join("")}
+            </tbody>
+          </table>
+        </div>
+      </td>
+    </tr>
+  `;
+}
+
+function renderProductOrderRow(row) {
+  const order = row.marketplaceOrderId || row.orderId || row.platformOrderId || "-";
+  const detail = row.platformOrderId && row.platformOrderId !== order ? `Pedido ${row.platformOrderId}` : "";
+
+  return `
+    <tr>
+      <td>
+        <strong>${escapeHtml(order)}</strong>
+        <small>${escapeHtml(detail)}</small>
+      </td>
+      <td>${escapeHtml(formatDate(row.date))}</td>
+      <td class="money">${formatMoney(row.cost)}</td>
+      <td class="money">${formatMoney(row.netReceived)}</td>
+      <td class="money ${row.profit >= 0 ? "positive" : "negative"}">${formatMoney(row.profit)}</td>
+    </tr>
+  `;
+}
+
+function handleProductSummaryClick(event) {
+  const button = event.target.closest("[data-product-key]");
+  if (!button) return;
+
+  const key = button.dataset.productKey;
+  if (state.expandedProducts.has(key)) {
+    state.expandedProducts.delete(key);
+  } else {
+    state.expandedProducts.add(key);
+  }
+
+  renderProductSummary();
 }
 
 function productSummaryRows(rows) {
@@ -1148,12 +1228,14 @@ function productSummaryRows(rows) {
     const key = productKey(row);
     if (!map.has(key)) {
       map.set(key, {
+        key,
         label: key,
         sales: 0,
         netReceived: 0,
         cost: 0,
         profit: 0,
         margin: 0,
+        orders: [],
       });
     }
 
@@ -1162,12 +1244,14 @@ function productSummaryRows(rows) {
     item.netReceived += Number(row.netReceived) || 0;
     item.cost += Number(row.cost) || 0;
     item.profit += Number(row.profit) || 0;
+    item.orders.push(row);
   });
 
   return [...map.values()]
     .map((item) => ({
       ...item,
       margin: item.netReceived ? item.profit / item.netReceived : 0,
+      orders: [...item.orders].sort(sortByDateDesc),
     }))
     .sort((a, b) => b.profit - a.profit || b.netReceived - a.netReceived);
 }
