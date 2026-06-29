@@ -3,6 +3,7 @@ const { getUserFromRequest } = require("./_auth");
 
 let pool;
 let tableReady = false;
+const SUPPORTED_PAYLOAD_VERSIONS = new Set([1, 2]);
 
 module.exports = async function handler(req, res) {
   setJsonHeaders(res);
@@ -120,7 +121,7 @@ async function saveSession(req, res, username) {
   const body = await readBody(req);
   const payload = body.payload;
 
-  if (!payload || payload.version !== 1) {
+  if (!isValidSessionPayload(payload)) {
     return send(res, 400, { ok: false, error: "Sessão inválida." });
   }
 
@@ -135,6 +136,10 @@ async function saveSession(req, res, username) {
   );
 
   return send(res, 200, { ok: true });
+}
+
+function isValidSessionPayload(payload) {
+  return Boolean(payload && SUPPORTED_PAYLOAD_VERSIONS.has(payload.version));
 }
 
 async function deleteSession(req, res, username) {

@@ -71,20 +71,44 @@
           </span>
         </label>
 
-        <div class="health-panel" id="healthPanel">
-          <strong>Aguardando importação</strong>
-          <span>Os indicadores aparecem assim que as duas planilhas forem carregadas.</span>
+        <div class="analysis-panel">
+          <div class="health-panel" id="healthPanel">
+            <strong>Aguardando importação</strong>
+            <span>Selecione as duas planilhas para criar uma nova análise.</span>
+          </div>
+          <div class="field">
+            <label for="analysisName">Nome da análise</label>
+            <input id="analysisName" type="text" placeholder="Ex.: Março 2026" />
+          </div>
+          <div class="analysis-actions">
+            <button class="action-button secondary-action" id="newAnalysis" type="button">
+              <i data-lucide="plus"></i>Nova análise
+            </button>
+            <button class="action-button" id="saveAnalysis" type="button" disabled>
+              <i data-lucide="save"></i>Salvar análise
+            </button>
+          </div>
+          <small class="analysis-count" id="analysisCount">0 análises salvas</small>
         </div>
       </section>
 
       <section class="filters" aria-label="Filtros">
         <div class="field">
+          <label for="analysisFilter">Análise</label>
+          <select id="analysisFilter"></select>
+        </div>
+        <div class="field">
           <label for="periodPreset">Período</label>
           <select id="periodPreset">
             <option value="all">Todo o período</option>
+            <option value="year">Ano</option>
             <option value="month">Mês</option>
             <option value="custom">Datas</option>
           </select>
+        </div>
+        <div class="field" id="yearField">
+          <label for="yearFilter">Ano</label>
+          <select id="yearFilter"></select>
         </div>
         <div class="field" id="monthField">
           <label for="monthFilter">Mês</label>
@@ -144,7 +168,7 @@
       <section class="chart-grid" aria-label="Gráficos">
         <article class="chart-panel wide">
           <header>
-            <h2>Evolução diária</h2>
+            <h2>Evolução do período</h2>
             <span id="dailyHint">Receita, custo e lucro</span>
           </header>
           <div class="chart-box"><canvas id="dailyChart"></canvas></div>
@@ -163,8 +187,38 @@
           </header>
           <div class="chart-box"><canvas id="productChart"></canvas></div>
         </article>
+        <article class="chart-panel">
+          <header>
+            <h2>Produtos no prejuízo</h2>
+            <span>Menor lucro</span>
+          </header>
+          <div class="chart-box"><canvas id="lossProductChart"></canvas></div>
+        </article>
       </section>
 
+      <section class="table-section product-section" aria-label="Resumo por produto">
+        <div class="table-header">
+          <div>
+            <h2>Resumo por produto</h2>
+            <span id="productSummaryCount">0 produtos</span>
+          </div>
+        </div>
+        <div class="table-wrap product-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Produto</th>
+                <th class="money">Vendas</th>
+                <th class="money">Recebido</th>
+                <th class="money">Custo</th>
+                <th class="money">Lucro</th>
+                <th class="money">Margem</th>
+              </tr>
+            </thead>
+            <tbody id="productSummaryBody"></tbody>
+          </table>
+        </div>
+      </section>
       <section class="split-section">
         <article class="summary-panel">
           <header>

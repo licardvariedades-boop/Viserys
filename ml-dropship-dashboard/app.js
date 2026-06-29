@@ -1,4 +1,5 @@
 const state = {
+  analyses: [],
   platform: null,
   marketplace: null,
   rows: [],
@@ -52,6 +53,10 @@ document.addEventListener("DOMContentLoaded", () => {
     marketplaceFile: document.querySelector("#marketplaceFile"),
     platformFileName: document.querySelector("#platformFileName"),
     marketplaceFileName: document.querySelector("#marketplaceFileName"),
+    analysisName: document.querySelector("#analysisName"),
+    newAnalysis: document.querySelector("#newAnalysis"),
+    saveAnalysis: document.querySelector("#saveAnalysis"),
+    analysisCount: document.querySelector("#analysisCount"),
     healthPanel: document.querySelector("#healthPanel"),
     loginScreen: document.querySelector("#loginScreen"),
     loginForm: document.querySelector("#loginForm"),
@@ -64,6 +69,9 @@ document.addEventListener("DOMContentLoaded", () => {
     exportXlsx: document.querySelector("#exportXlsx"),
     exportCsv: document.querySelector("#exportCsv"),
     periodPreset: document.querySelector("#periodPreset"),
+    analysisFilter: document.querySelector("#analysisFilter"),
+    yearField: document.querySelector("#yearField"),
+    yearFilter: document.querySelector("#yearFilter"),
     monthField: document.querySelector("#monthField"),
     monthFilter: document.querySelector("#monthFilter"),
     startField: document.querySelector("#startField"),
@@ -101,6 +109,8 @@ document.addEventListener("DOMContentLoaded", () => {
     netComponentTotal: document.querySelector("#netComponentTotal"),
     checkDiffTotal: document.querySelector("#checkDiffTotal"),
     tableCount: document.querySelector("#tableCount"),
+    productSummaryCount: document.querySelector("#productSummaryCount"),
+    productSummaryBody: document.querySelector("#productSummaryBody"),
     tabClosing: document.querySelector("#tabClosing"),
     tabDiff: document.querySelector("#tabDiff"),
     resultHead: document.querySelector("#resultHead"),
@@ -109,6 +119,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
   refs.platformFile.addEventListener("change", (event) => handleFile("platform", event));
   refs.marketplaceFile.addEventListener("change", (event) => handleFile("marketplace", event));
+  refs.newAnalysis.addEventListener("click", clearDraftAnalysis);
+  refs.saveAnalysis.addEventListener("click", saveCurrentAnalysis);
   refs.loginForm.addEventListener("submit", handleLogin);
   refs.logoutButton.addEventListener("click", handleLogout);
   refs.exportXlsx.addEventListener("click", exportWorkbook);
@@ -118,6 +130,8 @@ document.addEventListener("DOMContentLoaded", () => {
     applyFilters();
   });
   [
+    refs.analysisFilter,
+    refs.yearFilter,
     refs.monthFilter,
     refs.startDate,
     refs.endDate,
@@ -125,7 +139,10 @@ document.addEventListener("DOMContentLoaded", () => {
     refs.productSearch,
     refs.onlyMatched,
     refs.ignoreCanceled,
-  ].forEach((element) => element.addEventListener("input", applyFilters));
+  ].forEach((element) => {
+    element.addEventListener("input", applyFilters);
+    element.addEventListener("change", applyFilters);
+  });
   refs.tabClosing.addEventListener("click", () => setTab("closing"));
   refs.tabDiff.addEventListener("click", () => setTab("diff"));
 
@@ -160,12 +177,15 @@ async function handleFile(type, event) {
     const workbook = await readWorkbook(file);
     const parsed = isPlatform ? parsePlatformWorkbook(workbook, file.name) : parseMarketplaceWorkbook(workbook, file.name);
     state[type] = parsed;
-    reconcile();
-    await saveSessionToDatabase();
+    syncDraftState();
+    updateHealth(state.platform && state.marketplace
+      ? "Planilhas prontas para salvar"
+      : "Planilha carregada");
   } catch (error) {
     console.error(error);
     state[type] = null;
     label.textContent = `Erro: ${file.name}`;
+    syncDraftState();
     updateHealth(error.message, "warning");
     renderAll();
   }
@@ -173,10 +193,19 @@ async function handleFile(type, event) {
 
 function buildSessionPayload() {
   return {
-    version: 1,
+    version: 2,
     savedAt: new Date().toISOString(),
-    platform: packDataset(state.platform),
-    marketplace: packDataset(state.marketplace),
+    analyses: state.analyses.map(packAnalysis),
+  };
+}
+
+function packAnalysis(analysis) {
+  return {
+    id: analysis.id,
+    name: analysis.name,
+    createdAt: analysis.createdAt,
+    platform: packDataset(analysis.platform),
+    marketplace: packDataset(analysis.marketplace),
   };
 }
 
@@ -204,6 +233,21 @@ function unpackDataset(dataset, type) {
   };
 }
 
+function unpackAnalysis(analysis, index = 0) {
+  if (!analysis) return null;
+  const platform = unpackDataset(analysis.platform, "platform");
+  const marketplace = unpackDataset(analysis.marketplace, "marketplace");
+  if (!platform || !marketplace) return null;
+
+  return {
+    id: analysis.id || createAnalysisId(),
+    name: analysis.name || inferAnalysisName(platform, marketplace, index),
+    createdAt: analysis.createdAt || new Date().toISOString(),
+    platform,
+    marketplace,
+  };
+}
+
 function restoreRowDates(row) {
   const restored = { ...row };
   SESSION_DATE_FIELDS.forEach((field) => {
@@ -214,8 +258,76 @@ function restoreRowDates(row) {
   return restored;
 }
 
+async function saveCurrentAnalysis() {
+  if (!state.platform || !state.marketplace) {
+    updateHealth("Selecione as duas planilhas antes de salvar", "warning");
+    return;
+  }
+
+  refs.saveAnalysis.disabled = true;
+  const analysis = {
+    id: createAnalysisId(),
+    name: text(refs.analysisName?.value) || inferAnalysisName(state.platform, state.marketplace, state.analyses.length),
+    createdAt: new Date().toISOString(),
+    platform: state.platform,
+    marketplace: state.marketplace,
+  };
+
+  state.analyses.push(analysis);
+  clearDraftAnalysis({ keepHealth: true });
+  reconcile();
+  await saveSessionToDatabase("Analise salva no banco");
+}
+
+function clearDraftAnalysis(options = {}) {
+  state.platform = null;
+  state.marketplace = null;
+  if (refs.platformFile) refs.platformFile.value = "";
+  if (refs.marketplaceFile) refs.marketplaceFile.value = "";
+  if (refs.platformFileName) refs.platformFileName.textContent = "Nenhum arquivo selecionado";
+  if (refs.marketplaceFileName) refs.marketplaceFileName.textContent = "Nenhum arquivo selecionado";
+  if (refs.analysisName) refs.analysisName.value = "";
+  syncDraftState();
+  if (!options.keepHealth) updateHealth();
+}
+
+function syncDraftState() {
+  const readyToSave = Boolean(state.platform && state.marketplace);
+  if (refs.saveAnalysis) refs.saveAnalysis.disabled = !readyToSave;
+  if (refs.analysisCount) {
+    const total = state.analyses.length;
+    refs.analysisCount.textContent = `${formatInteger(total)} ${total === 1 ? "analise salva" : "analises salvas"}`;
+  }
+}
+
+function applySessionPayload(payload) {
+  const savedAnalyses = Array.isArray(payload?.analyses)
+    ? payload.analyses
+    : payload?.platform && payload?.marketplace
+      ? [{
+        id: createAnalysisId(),
+        name: inferAnalysisName(
+          unpackDataset(payload.platform, "platform"),
+          unpackDataset(payload.marketplace, "marketplace"),
+          0
+        ),
+        createdAt: payload.savedAt || new Date().toISOString(),
+        platform: payload.platform,
+        marketplace: payload.marketplace,
+      }]
+      : [];
+
+  state.analyses = savedAnalyses
+    .map((analysis, index) => unpackAnalysis(analysis, index))
+    .filter(Boolean);
+
+  clearDraftAnalysis({ keepHealth: true });
+  reconcile();
+  syncDraftState();
+}
+
 function hasImportedData() {
-  return Boolean(state.platform || state.marketplace || state.rows.length || state.mlOnly.length);
+  return state.analyses.length > 0;
 }
 
 async function checkAuthAndLoad() {
@@ -292,6 +404,7 @@ function setLoggedOutUi() {
 }
 
 function resetDashboardState() {
+  state.analyses = [];
   state.platform = null;
   state.marketplace = null;
   state.rows = [];
@@ -302,12 +415,15 @@ function resetDashboardState() {
   refs.marketplaceFile.value = "";
   refs.platformFileName.textContent = "Nenhum arquivo selecionado";
   refs.marketplaceFileName.textContent = "Nenhum arquivo selecionado";
+  refs.analysisName.value = "";
   refs.periodPreset.value = "all";
+  refs.analysisFilter.value = "all";
   refs.statusFilter.value = "all";
   refs.productSearch.value = "";
   refs.onlyMatched.checked = true;
   refs.ignoreCanceled.checked = true;
   syncFilterVisibility();
+  syncDraftState();
   updateFilterOptions();
   renderAll();
   updateHealth();
@@ -329,12 +445,12 @@ async function loadSessionFromDatabase() {
   }
 }
 
-async function saveSessionToDatabase() {
+async function saveSessionToDatabase(successMessage = "Dados salvos no banco") {
   if (!hasImportedData()) return;
 
   try {
     await sessionRequest("POST", { payload: buildSessionPayload() });
-    updateHealth("Dados salvos no banco", "ready");
+    updateHealth(successMessage, "ready");
   } catch (error) {
     console.error(error);
     updateHealth(error.message || "Nao consegui salvar no banco", "warning");
@@ -636,21 +752,29 @@ function finalizeMarketplaceGroup(group) {
 }
 
 function reconcile() {
-  if (!state.platform || !state.marketplace) {
-    state.rows = [];
-    state.mlOnly = [];
-    state.filteredClosing = [];
-    state.filteredDiffs = [];
-    updateHealth();
-    updateFilterOptions();
-    renderAll();
-    return;
-  }
+  state.rows = [];
+  state.mlOnly = [];
 
-  const mlById = state.marketplace.byId;
-  const platformIds = new Set(state.platform.rows.map((row) => row.orderId));
+  state.analyses.forEach((analysis) => {
+    const reconciled = reconcileAnalysis(analysis);
+    state.rows.push(...reconciled.rows);
+    state.mlOnly.push(...reconciled.mlOnly);
+  });
 
-  state.rows = state.platform.rows.map((platformRow) => {
+  updateFilterOptions();
+  applyFilters();
+  updateHealth();
+}
+
+function reconcileAnalysis(analysis) {
+  const mlById = analysis.marketplace.byId;
+  const platformIds = new Set(analysis.platform.rows.map((row) => row.orderId));
+  const analysisFields = {
+    analysisId: analysis.id,
+    analysisName: analysis.name,
+  };
+
+  const rows = analysis.platform.rows.map((platformRow) => {
     const marketplaceRow = mlById.get(platformRow.orderId);
     const matched = Boolean(marketplaceRow);
     const netReceived = marketplaceRow?.netReceived ?? 0;
@@ -662,6 +786,7 @@ function reconcile() {
     const statusDescription = marketplaceRow?.statusDescription || "";
 
     return {
+      ...analysisFields,
       source: "platform",
       matched,
       missingType: matched ? "" : "Pedido sem Mercado Livre",
@@ -710,9 +835,10 @@ function reconcile() {
     };
   });
 
-  state.mlOnly = state.marketplace.rows
+  const mlOnly = analysis.marketplace.rows
     .filter((row) => !platformIds.has(row.saleId))
     .map((row) => ({
+      ...analysisFields,
       source: "marketplace",
       matched: false,
       missingType: "Mercado Livre sem pedido",
@@ -760,9 +886,7 @@ function reconcile() {
       marketplaceRow: row.firstRow,
     }));
 
-  updateFilterOptions();
-  applyFilters();
-  updateHealth();
+  return { rows, mlOnly };
 }
 
 function applyFilters() {
@@ -778,11 +902,21 @@ function matchesFilters(row, respectOnlyMatched, respectIgnored = true) {
     return false;
   }
 
+  const selectedAnalysis = refs.analysisFilter?.value || "all";
+  if (selectedAnalysis !== "all" && row.analysisId !== selectedAnalysis) {
+    return false;
+  }
+
   if (respectIgnored && refs.ignoreCanceled?.checked && isCancelled(row)) {
     return false;
   }
 
   const preset = refs.periodPreset?.value || "all";
+  if (preset === "year") {
+    const selectedYear = refs.yearFilter?.value || "";
+    if (selectedYear && yearKey(row.date) !== selectedYear) return false;
+  }
+
   if (preset === "month") {
     const selectedMonth = refs.monthFilter?.value || "";
     if (selectedMonth && monthKey(row.date) !== selectedMonth) return false;
@@ -819,8 +953,26 @@ function matchesFilters(row, respectOnlyMatched, respectIgnored = true) {
 
 function updateFilterOptions() {
   const rows = [...state.rows, ...state.mlOnly];
+  const previousAnalysis = refs.analysisFilter?.value || "all";
+  const previousYear = refs.yearFilter?.value || "";
   const previousMonth = refs.monthFilter?.value || "";
   const previousStatus = refs.statusFilter?.value || "all";
+
+  refs.analysisFilter.innerHTML = [
+    `<option value="all">Todas</option>`,
+    ...state.analyses.map((analysis) => (
+      `<option value="${escapeAttribute(analysis.id)}">${escapeHtml(analysis.name)}</option>`
+    )),
+  ].join("");
+  if (previousAnalysis === "all" || state.analyses.some((analysis) => analysis.id === previousAnalysis)) {
+    refs.analysisFilter.value = previousAnalysis;
+  }
+
+  const years = [...new Set(rows.map((row) => yearKey(row.date)).filter(Boolean))].sort();
+  refs.yearFilter.innerHTML = years.length
+    ? years.map((key) => `<option value="${key}">${key}</option>`).join("")
+    : `<option value="">Sem ano</option>`;
+  if (years.includes(previousYear)) refs.yearFilter.value = previousYear;
 
   const months = [...new Set(rows.map((row) => monthKey(row.date)).filter(Boolean))].sort();
   refs.monthFilter.innerHTML = months.length
@@ -836,10 +988,13 @@ function updateFilterOptions() {
     ...statuses.map((item) => `<option value="${escapeAttribute(item.value)}">${escapeHtml(item.label)}</option>`),
   ].join("");
   if (statuses.some((item) => item.value === previousStatus)) refs.statusFilter.value = previousStatus;
+
+  syncDraftState();
 }
 
 function syncFilterVisibility() {
   const preset = refs.periodPreset?.value || "all";
+  refs.yearField.classList.toggle("hidden", preset !== "year");
   refs.monthField.classList.toggle("hidden", preset !== "month");
   refs.startField.classList.toggle("hidden", preset !== "custom");
   refs.endField.classList.toggle("hidden", preset !== "custom");
@@ -850,6 +1005,7 @@ function renderAll() {
   renderReconciliation();
   renderBreakdown();
   updateCharts();
+  renderProductSummary();
   renderTable();
   const hasData = state.rows.length > 0 || state.mlOnly.length > 0;
   refs.exportXlsx.disabled = !hasData;
@@ -922,6 +1078,62 @@ function renderBreakdown() {
   refs.checkDiffTotal.textContent = formatMoney(sum(rows, "checkDiff"));
 }
 
+function renderProductSummary() {
+  if (!refs.productSummaryBody) return;
+
+  const products = productSummaryRows(state.filteredClosing);
+  refs.productSummaryCount.textContent = `${formatInteger(products.length)} ${products.length === 1 ? "produto" : "produtos"}`;
+
+  if (!products.length) {
+    refs.productSummaryBody.innerHTML = `<tr><td colspan="6" class="empty-state">Sem produtos para os filtros atuais.</td></tr>`;
+    return;
+  }
+
+  refs.productSummaryBody.innerHTML = products.slice(0, 60).map((item) => `
+    <tr class="${item.profit >= 0 ? "profit-row" : "loss-row"}">
+      <td>
+        <strong>${escapeHtml(item.label)}</strong>
+        <small>${escapeHtml(`${formatInteger(item.sales)} vendas`)}</small>
+      </td>
+      <td class="money">${formatInteger(item.sales)}</td>
+      <td class="money">${formatMoney(item.netReceived)}</td>
+      <td class="money">${formatMoney(item.cost)}</td>
+      <td class="money ${item.profit >= 0 ? "positive" : "negative"}">${formatMoney(item.profit)}</td>
+      <td class="money ${item.margin >= 0 ? "positive" : "negative"}">${formatPercent(item.margin)}</td>
+    </tr>
+  `).join("");
+}
+
+function productSummaryRows(rows) {
+  const map = new Map();
+  rows.forEach((row) => {
+    const key = productKey(row);
+    if (!map.has(key)) {
+      map.set(key, {
+        label: key,
+        sales: 0,
+        netReceived: 0,
+        cost: 0,
+        profit: 0,
+        margin: 0,
+      });
+    }
+
+    const item = map.get(key);
+    item.sales += 1;
+    item.netReceived += Number(row.netReceived) || 0;
+    item.cost += Number(row.cost) || 0;
+    item.profit += Number(row.profit) || 0;
+  });
+
+  return [...map.values()]
+    .map((item) => ({
+      ...item,
+      margin: item.netReceived ? item.profit / item.netReceived : 0,
+    }))
+    .sort((a, b) => b.profit - a.profit || b.netReceived - a.netReceived);
+}
+
 function renderTable() {
   if (state.activeTab === "closing") {
     renderClosingTable();
@@ -936,6 +1148,7 @@ function renderClosingTable() {
   refs.resultHead.innerHTML = `
     <tr>
       <th>Data</th>
+      <th>Analise</th>
       <th>Venda</th>
       <th>Status</th>
       <th>Produto</th>
@@ -953,13 +1166,14 @@ function renderClosingTable() {
   `;
 
   if (!rows.length) {
-    refs.resultBody.innerHTML = `<tr><td colspan="14" class="empty-state">Sem registros para os filtros atuais.</td></tr>`;
+    refs.resultBody.innerHTML = `<tr><td colspan="15" class="empty-state">Sem registros para os filtros atuais.</td></tr>`;
     return;
   }
 
   refs.resultBody.innerHTML = rows.map((row) => `
     <tr>
       <td>${escapeHtml(formatDate(row.date))}</td>
+      <td>${escapeHtml(row.analysisName || "-")}</td>
       <td>
         <strong>${escapeHtml(row.orderId || "-")}</strong>
         <small>${escapeHtml(row.platformOrderId ? `Pedido ${row.platformOrderId}` : row.missingType || "")}</small>
@@ -996,6 +1210,7 @@ function renderDiffTable() {
     <tr>
       <th>Tipo</th>
       <th>Data</th>
+      <th>Analise</th>
       <th>ID</th>
       <th>Status</th>
       <th>Produto</th>
@@ -1006,7 +1221,7 @@ function renderDiffTable() {
   `;
 
   if (!rows.length) {
-    refs.resultBody.innerHTML = `<tr><td colspan="8" class="empty-state">Sem divergências para os filtros atuais.</td></tr>`;
+    refs.resultBody.innerHTML = `<tr><td colspan="9" class="empty-state">Sem divergencias para os filtros atuais.</td></tr>`;
     return;
   }
 
@@ -1019,6 +1234,7 @@ function renderDiffTable() {
       <tr>
         <td>${escapeHtml(row.missingType)}</td>
         <td>${escapeHtml(formatDate(row.date))}</td>
+        <td>${escapeHtml(row.analysisName || "-")}</td>
         <td><strong>${escapeHtml(row.orderId || "-")}</strong></td>
         <td><span class="status-pill ${statusClass(row)}">${escapeHtml(row.status || "-")}</span></td>
         <td>
@@ -1134,6 +1350,24 @@ function setupCharts() {
       scales: chartScales("horizontalMoney"),
     },
   });
+
+  state.charts.lossProduct = new Chart(document.querySelector("#lossProductChart"), {
+    type: "bar",
+    data: {
+      labels: [],
+      datasets: [{
+        label: "Lucro",
+        data: [],
+        backgroundColor: "#ba3b3b",
+        borderRadius: 5,
+      }],
+    },
+    options: {
+      ...chartDefaults,
+      indexAxis: "y",
+      scales: chartScales("horizontalMoney"),
+    },
+  });
 }
 
 function chartScales(mode) {
@@ -1184,12 +1418,18 @@ function updateCharts() {
   if (!window.Chart || !state.charts.daily) return;
 
   const rows = state.filteredClosing;
-  const daily = aggregate(rows.filter((row) => row.date), (row) => dateKey(row.date), ["netReceived", "cost", "profit"]);
-  const sortedDaily = [...daily.entries()].sort(([a], [b]) => a.localeCompare(b));
-  state.charts.daily.data.labels = sortedDaily.map(([key]) => formatShortDateKey(key));
-  state.charts.daily.data.datasets[0].data = sortedDaily.map(([, item]) => round2(item.netReceived));
-  state.charts.daily.data.datasets[1].data = sortedDaily.map(([, item]) => round2(item.cost));
-  state.charts.daily.data.datasets[2].data = sortedDaily.map(([, item]) => round2(item.profit));
+  const groupByMonth = ["all", "year"].includes(refs.periodPreset?.value || "all");
+  const period = aggregate(
+    rows.filter((row) => row.date),
+    (row) => groupByMonth ? monthKey(row.date) : dateKey(row.date),
+    ["netReceived", "cost", "profit"]
+  );
+  const sortedPeriod = [...period.entries()].sort(([a], [b]) => a.localeCompare(b));
+  state.charts.daily.data.labels = sortedPeriod.map(([key]) => groupByMonth ? monthLabel(key) : formatShortDateKey(key));
+  state.charts.daily.data.datasets[0].data = sortedPeriod.map(([, item]) => round2(item.netReceived));
+  state.charts.daily.data.datasets[1].data = sortedPeriod.map(([, item]) => round2(item.cost));
+  state.charts.daily.data.datasets[2].data = sortedPeriod.map(([, item]) => round2(item.profit));
+  state.charts.daily.data.datasets[2].borderColor = sortedPeriod.some(([, item]) => item.profit < 0) ? "#ba3b3b" : "#16794c";
   state.charts.daily.update();
   refs.dailyHint.textContent = `${formatInteger(rows.length)} vendas filtradas`;
 
@@ -1199,6 +1439,7 @@ function updateCharts() {
     .slice(0, 8);
   state.charts.status.data.labels = statusRows.map(([label]) => truncate(label, 24));
   state.charts.status.data.datasets[0].data = statusRows.map(([, item]) => round2(item.profit));
+  state.charts.status.data.datasets[0].backgroundColor = statusRows.map(([, item]) => item.profit >= 0 ? "#16794c" : "#ba3b3b");
   state.charts.status.update();
 
   const byProduct = aggregate(rows, productKey, ["profit"]);
@@ -1207,19 +1448,31 @@ function updateCharts() {
     .slice(0, 8);
   state.charts.product.data.labels = productRows.map(([label]) => truncate(label, 28));
   state.charts.product.data.datasets[0].data = productRows.map(([, item]) => round2(item.profit));
+  state.charts.product.data.datasets[0].backgroundColor = productRows.map(([, item]) => item.profit >= 0 ? "#16794c" : "#ba3b3b");
   state.charts.product.update();
+
+  const lossRows = [...byProduct.entries()]
+    .sort((a, b) => a[1].profit - b[1].profit)
+    .slice(0, 8);
+  state.charts.lossProduct.data.labels = lossRows.map(([label]) => truncate(label, 28));
+  state.charts.lossProduct.data.datasets[0].data = lossRows.map(([, item]) => round2(item.profit));
+  state.charts.lossProduct.data.datasets[0].backgroundColor = lossRows.map(([, item]) => item.profit >= 0 ? "#16794c" : "#ba3b3b");
+  state.charts.lossProduct.update();
 }
 
 function exportWorkbook() {
   if (!window.XLSX) return;
 
   const metrics = currentMetrics();
+  const selectedAnalysis = state.analyses.find((analysis) => analysis.id === refs.analysisFilter?.value);
   const cancelledIgnored = refs.ignoreCanceled?.checked
     ? [...state.rows, ...state.mlOnly].filter((row) => isCancelled(row) && matchesFilters(row, false, false)).length
     : 0;
   const summary = [
-    ["Arquivo pedidos", state.platform?.fileName || ""],
-    ["Arquivo Mercado Livre", state.marketplace?.fileName || ""],
+    ["Analises salvas", state.analyses.length],
+    ["Filtro de analise", selectedAnalysis?.name || "Todas"],
+    ["Arquivos pedidos", state.analyses.map((analysis) => analysis.platform.fileName).join(" | ")],
+    ["Arquivos Mercado Livre", state.analyses.map((analysis) => analysis.marketplace.fileName).join(" | ")],
     ["Modo do fechamento", financialBaseLabel()],
     ["Registros filtrados", state.filteredClosing.length],
     ["Canceladas ignoradas", cancelledIgnored],
@@ -1234,6 +1487,7 @@ function exportWorkbook() {
 
   const wb = window.XLSX.utils.book_new();
   window.XLSX.utils.book_append_sheet(wb, window.XLSX.utils.aoa_to_sheet(summary), "Resumo");
+  window.XLSX.utils.book_append_sheet(wb, window.XLSX.utils.json_to_sheet(productSummaryRows(state.filteredClosing).map(toProductExportRow)), "Produtos");
   window.XLSX.utils.book_append_sheet(wb, window.XLSX.utils.json_to_sheet(state.filteredClosing.map(toExportRow)), "Fechamento");
   window.XLSX.utils.book_append_sheet(wb, window.XLSX.utils.json_to_sheet(state.filteredDiffs.map(toExportRow)), "Divergencias");
   window.XLSX.writeFile(wb, `fechamento_dropshipping_${dateStamp()}.xlsx`);
@@ -1256,6 +1510,7 @@ function exportCsv() {
 
 function toExportRow(row) {
   return {
+    "Analise": row.analysisName || "",
     "Tipo": row.missingType || "Conciliado",
     "Data": formatDate(row.date),
     "Venda Mercado Livre": row.marketplaceOrderId || row.orderId,
@@ -1286,6 +1541,17 @@ function toExportRow(row) {
   };
 }
 
+function toProductExportRow(item) {
+  return {
+    "Produto": item.label,
+    "Vendas": item.sales,
+    "Recebido Liquido": round2(item.netReceived),
+    "Custo Produto": round2(item.cost),
+    "Lucro Liquido": round2(item.profit),
+    "Margem": round2(item.margin),
+  };
+}
+
 function currentMetrics() {
   const rows = state.filteredClosing;
   const net = sum(rows, "netReceived");
@@ -1312,7 +1578,7 @@ function updateHealth(message = "", forcedClass = "") {
     return;
   }
 
-  if (state.platform && state.marketplace) {
+  if (state.rows.length || state.mlOnly.length) {
     const matched = state.rows.filter((row) => row.matched).length;
     const missingPlatform = state.rows.filter((row) => !row.matched).length;
     const missingMarketplace = state.mlOnly.length;
@@ -1326,13 +1592,34 @@ function updateHealth(message = "", forcedClass = "") {
   }
 
   if (state.platform || state.marketplace) panel.classList.add("warning");
-  panel.innerHTML = `<strong>Aguardando importação</strong><span>${escapeHtml(statusLine())}</span>`;
+  panel.innerHTML = `<strong>Aguardando importacao</strong><span>${escapeHtml(statusLine())}</span>`;
 }
 
 function statusLine() {
-  const left = state.platform ? `Pedidos: ${state.platform.rows.length}` : "Pedidos pendente";
-  const right = state.marketplace ? `Mercado Livre: ${state.marketplace.rows.length}` : "Mercado Livre pendente";
-  return `${left} · ${right}`;
+  const saved = `${formatInteger(state.analyses.length)} ${state.analyses.length === 1 ? "analise salva" : "analises salvas"}`;
+  const left = state.platform ? `Pedidos prontos: ${formatInteger(state.platform.rows.length)}` : "Pedidos pendente";
+  const right = state.marketplace ? `Mercado Livre pronto: ${formatInteger(state.marketplace.rows.length)}` : "Mercado Livre pendente";
+  return `${saved} | ${left} | ${right}`;
+}
+
+function createAnalysisId() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
+  return `analysis_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function inferAnalysisName(platform, marketplace, index = 0) {
+  const rows = [...(platform?.rows || []), ...(marketplace?.rows || [])];
+  const months = [...new Set(rows.map((row) => monthKey(row.date)).filter(Boolean))].sort();
+
+  if (months.length === 1) return monthLabel(months[0]);
+  if (months.length > 1) return `${monthLabel(months[0])} a ${monthLabel(months.at(-1))}`;
+
+  const fileName = platform?.fileName || marketplace?.fileName;
+  return fileName ? stripExtension(fileName) : `Analise ${index + 1}`;
+}
+
+function stripExtension(fileName) {
+  return text(fileName).replace(/\.[a-z0-9]+$/i, "");
 }
 
 function getSheetRows(workbook, sheetName) {
@@ -1500,6 +1787,11 @@ function dateKey(date) {
 function monthKey(date) {
   if (!date) return "";
   return dateKey(date).slice(0, 7);
+}
+
+function yearKey(date) {
+  if (!date) return "";
+  return dateKey(date).slice(0, 4);
 }
 
 function monthLabel(key) {
