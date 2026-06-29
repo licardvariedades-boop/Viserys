@@ -671,6 +671,35 @@ th.money {
   white-space: nowrap;
 }
 
+.editable-money-cell {
+  min-width: 130px;
+}
+
+.money-editor {
+  width: 104px;
+  min-height: 32px;
+  border: 1px solid #cfd8d2;
+  border-radius: 6px;
+  background: #fff;
+  color: var(--text);
+  font: inherit;
+  font-weight: 650;
+  line-height: 1;
+  outline: none;
+  padding: 5px 8px;
+  text-align: right;
+}
+
+.money-editor:focus {
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px rgba(22, 121, 76, 0.14);
+}
+
+.money-editor.adjusted {
+  border-color: rgba(22, 121, 76, 0.58);
+  background: #f5fbf7;
+}
+
 .status-pill {
   display: inline-block;
   max-width: 210px;

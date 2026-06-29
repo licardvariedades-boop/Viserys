@@ -1,5 +1,6 @@
 const state = {
   analyses: [],
+  manualAdjustments: {},
   platform: null,
   marketplace: null,
   rows: [],
@@ -46,6 +47,7 @@ const MONTH_NAMES = [
 ];
 
 let refs = {};
+let sessionSaveTimer = 0;
 
 document.addEventListener("DOMContentLoaded", () => {
   refs = {
@@ -145,6 +147,8 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   refs.tabClosing.addEventListener("click", () => setTab("closing"));
   refs.tabDiff.addEventListener("click", () => setTab("diff"));
+  refs.resultBody.addEventListener("input", handleDiffAdjustmentInput);
+  refs.resultBody.addEventListener("blur", handleDiffAdjustmentBlur, true);
 
   refs.periodPreset.value = "all";
   refs.onlyMatched.checked = true;
@@ -196,6 +200,7 @@ function buildSessionPayload() {
     version: 2,
     savedAt: new Date().toISOString(),
     analyses: state.analyses.map(packAnalysis),
+    manualAdjustments: packManualAdjustments(),
   };
 }
 
@@ -258,6 +263,23 @@ function restoreRowDates(row) {
   return restored;
 }
 
+function packManualAdjustments() {
+  return normalizeManualAdjustments(state.manualAdjustments);
+}
+
+function normalizeManualAdjustments(source = {}) {
+  return Object.entries(source || {}).reduce((adjustments, [key, value]) => {
+    const item = {};
+    ["netReceived", "cost"].forEach((field) => {
+      const number = Number(value?.[field]);
+      if (Number.isFinite(number)) item[field] = round2(number);
+    });
+
+    if (Object.keys(item).length) adjustments[key] = item;
+    return adjustments;
+  }, {});
+}
+
 async function saveCurrentAnalysis() {
   if (!state.platform || !state.marketplace) {
     updateHealth("Selecione as duas planilhas antes de salvar", "warning");
@@ -301,6 +323,8 @@ function syncDraftState() {
 }
 
 function applySessionPayload(payload) {
+  state.manualAdjustments = normalizeManualAdjustments(payload?.manualAdjustments);
+
   const savedAnalyses = Array.isArray(payload?.analyses)
     ? payload.analyses
     : payload?.platform && payload?.marketplace
@@ -405,6 +429,7 @@ function setLoggedOutUi() {
 
 function resetDashboardState() {
   state.analyses = [];
+  state.manualAdjustments = {};
   state.platform = null;
   state.marketplace = null;
   state.rows = [];
@@ -455,6 +480,13 @@ async function saveSessionToDatabase(successMessage = "Dados salvos no banco") {
     console.error(error);
     updateHealth(error.message || "Nao consegui salvar no banco", "warning");
   }
+}
+
+function scheduleSessionSave(successMessage = "Dados salvos no banco") {
+  window.clearTimeout(sessionSaveTimer);
+  sessionSaveTimer = window.setTimeout(() => {
+    saveSessionToDatabase(successMessage);
+  }, 700);
 }
 
 async function sessionRequest(method, body = null) {
@@ -785,8 +817,9 @@ function reconcileAnalysis(analysis) {
     const status = marketplaceRow?.status || platformRow.status || "Sem status";
     const statusDescription = marketplaceRow?.statusDescription || "";
 
-    return {
+    return applyManualAdjustment({
       ...analysisFields,
+      adjustmentKey: manualAdjustmentKey(analysis.id, "platform", platformRow.orderId),
       source: "platform",
       matched,
       missingType: matched ? "" : "Pedido sem Mercado Livre",
@@ -808,6 +841,8 @@ function reconcileAnalysis(analysis) {
       logistics: platformRow.logistics,
       units: marketplaceRow?.units ?? 0,
       orderValue: platformRow.orderValue,
+      baseNetReceived: netReceived,
+      baseCost: cost,
       cost,
       netReceived,
       grossRevenue: marketplaceRow?.grossRevenue ?? 0,
@@ -832,13 +867,14 @@ function reconcileAnalysis(analysis) {
       roi: cost ? profit / cost : 0,
       sourceRow: platformRow.sourceRow,
       marketplaceRow: marketplaceRow?.firstRow || "",
-    };
+    });
   });
 
   const mlOnly = analysis.marketplace.rows
     .filter((row) => !platformIds.has(row.saleId))
-    .map((row) => ({
+    .map((row) => applyManualAdjustment({
       ...analysisFields,
+      adjustmentKey: manualAdjustmentKey(analysis.id, "marketplace", row.saleId),
       source: "marketplace",
       matched: false,
       missingType: "Mercado Livre sem pedido",
@@ -860,6 +896,8 @@ function reconcileAnalysis(analysis) {
       logistics: "",
       units: row.units,
       orderValue: 0,
+      baseNetReceived: row.netReceived,
+      baseCost: 0,
       cost: 0,
       netReceived: row.netReceived,
       grossRevenue: row.grossRevenue,
@@ -889,16 +927,16 @@ function reconcileAnalysis(analysis) {
   return { rows, mlOnly };
 }
 
-function applyFilters() {
+function applyFilters(options = {}) {
   syncFilterVisibility();
   const baseRows = [...state.rows, ...state.mlOnly];
   state.filteredClosing = baseRows.filter((row) => matchesFilters(row, true, true));
   state.filteredDiffs = baseRows.filter((row) => !row.matched && matchesFilters(row, false, true));
-  renderAll();
+  renderAll(options);
 }
 
 function matchesFilters(row, respectOnlyMatched, respectIgnored = true) {
-  if (respectOnlyMatched && refs.onlyMatched?.checked && !row.matched) {
+  if (respectOnlyMatched && refs.onlyMatched?.checked && !row.matched && !row.manualAdjusted) {
     return false;
   }
 
@@ -1000,13 +1038,13 @@ function syncFilterVisibility() {
   refs.endField.classList.toggle("hidden", preset !== "custom");
 }
 
-function renderAll() {
+function renderAll(options = {}) {
   renderKpis();
   renderReconciliation();
   renderBreakdown();
   updateCharts();
   renderProductSummary();
-  renderTable();
+  if (options.renderTable !== false) renderTable();
   const hasData = state.rows.length > 0 || state.mlOnly.length > 0;
   refs.exportXlsx.disabled = !hasData;
   refs.exportCsv.disabled = !hasData;
@@ -1241,12 +1279,117 @@ function renderDiffTable() {
           <strong>${escapeHtml(row.product || "Sem produto")}</strong>
           <small>${escapeHtml(row.sku ? `SKU ${row.sku}` : "")}</small>
         </td>
-        <td class="money">${formatMoney(row.netReceived)}</td>
-        <td class="money">${formatMoney(row.cost)}</td>
+        <td class="money editable-money-cell">${renderMoneyEditor(row, "netReceived")}</td>
+        <td class="money editable-money-cell">${renderMoneyEditor(row, "cost")}</td>
         <td>${escapeHtml(note)}</td>
       </tr>
     `;
   }).join("");
+}
+
+function renderMoneyEditor(row, field) {
+  const adjusted = hasManualAdjustmentField(row.adjustmentKey, field);
+  const label = field === "netReceived" ? "Recebido" : "Custo";
+  return `
+    <input
+      class="money-editor ${adjusted ? "adjusted" : ""}"
+      type="text"
+      inputmode="decimal"
+      autocomplete="off"
+      aria-label="${escapeAttribute(`${label} ${row.orderId || ""}`)}"
+      data-adjustment-key="${escapeAttribute(row.adjustmentKey)}"
+      data-adjustment-field="${escapeAttribute(field)}"
+      value="${escapeAttribute(formatEditableMoney(row[field]))}"
+    />
+  `;
+}
+
+function handleDiffAdjustmentInput(event) {
+  const input = event.target.closest("[data-adjustment-field]");
+  if (!input) return;
+
+  const row = findRowByAdjustmentKey(input.dataset.adjustmentKey);
+  if (!row) return;
+
+  setManualAdjustment(row, input.dataset.adjustmentField, parseMoney(input.value));
+  input.classList.toggle("adjusted", hasManualAdjustmentField(row.adjustmentKey, input.dataset.adjustmentField));
+  applyFilters({ renderTable: false });
+  scheduleSessionSave("Ajuste salvo no banco");
+}
+
+function handleDiffAdjustmentBlur(event) {
+  const input = event.target.closest("[data-adjustment-field]");
+  if (!input) return;
+  input.value = formatEditableMoney(parseMoney(input.value));
+}
+
+function findRowByAdjustmentKey(key) {
+  return [...state.rows, ...state.mlOnly].find((row) => row.adjustmentKey === key);
+}
+
+function setManualAdjustment(row, field, value) {
+  if (!["netReceived", "cost"].includes(field)) return;
+
+  const baseField = field === "netReceived" ? "baseNetReceived" : "baseCost";
+  const key = row.adjustmentKey;
+  const nextValue = round2(value);
+  const baseValue = round2(row[baseField] || 0);
+  const current = { ...(state.manualAdjustments[key] || {}) };
+
+  if (sameMoney(nextValue, baseValue)) {
+    delete current[field];
+  } else {
+    current[field] = nextValue;
+  }
+
+  if (Object.keys(current).length) {
+    state.manualAdjustments[key] = current;
+  } else {
+    delete state.manualAdjustments[key];
+  }
+
+  Object.assign(row, applyManualAdjustment(row));
+}
+
+function applyManualAdjustment(row) {
+  const adjustment = state.manualAdjustments[row.adjustmentKey] || {};
+  const hasNetAdjustment = hasManualAdjustmentField(row.adjustmentKey, "netReceived");
+  const hasCostAdjustment = hasManualAdjustmentField(row.adjustmentKey, "cost");
+  const netReceived = hasNetAdjustment ? adjustment.netReceived : row.baseNetReceived ?? row.netReceived ?? 0;
+  const cost = hasCostAdjustment ? adjustment.cost : row.baseCost ?? row.cost ?? 0;
+  const profit = netReceived - cost;
+  const componentNet = Number(row.componentNet) || 0;
+
+  return {
+    ...row,
+    netReceived,
+    cost,
+    profit,
+    margin: netReceived ? profit / netReceived : 0,
+    roi: cost ? profit / cost : 0,
+    checkDiff: netReceived - componentNet,
+    manualAdjusted: hasNetAdjustment || hasCostAdjustment,
+  };
+}
+
+function manualAdjustmentKey(analysisId, source, orderId) {
+  return [analysisId, source, cleanId(orderId)].map(text).join("::");
+}
+
+function hasManualAdjustmentField(key, field) {
+  const value = state.manualAdjustments[key]?.[field];
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function sameMoney(left, right) {
+  return Math.abs(round2(left) - round2(right)) < 0.01;
+}
+
+function formatEditableMoney(value) {
+  return round2(value).toLocaleString("pt-BR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 }
 
 function setTab(tab) {
