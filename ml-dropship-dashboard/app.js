@@ -58,7 +58,7 @@ document.addEventListener("DOMContentLoaded", () => {
     marketplaceFile: document.querySelector("#marketplaceFile"),
     platformFileName: document.querySelector("#platformFileName"),
     marketplaceFileName: document.querySelector("#marketplaceFileName"),
-    analysisName: document.querySelector("#analysisName"),
+    analysisMonth: document.querySelector("#analysisMonth"),
     newAnalysis: document.querySelector("#newAnalysis"),
     saveAnalysis: document.querySelector("#saveAnalysis"),
     analysisCount: document.querySelector("#analysisCount"),
@@ -128,6 +128,7 @@ document.addEventListener("DOMContentLoaded", () => {
   refs.marketplaceFile.addEventListener("change", (event) => handleFile("marketplace", event));
   refs.newAnalysis.addEventListener("click", clearDraftAnalysis);
   refs.saveAnalysis.addEventListener("click", saveCurrentAnalysis);
+  refs.analysisMonth.addEventListener("change", syncDraftState);
   refs.loginForm.addEventListener("submit", handleLogin);
   refs.logoutButton.addEventListener("click", handleLogout);
   refs.exportXlsx.addEventListener("click", exportWorkbook);
@@ -254,6 +255,7 @@ function packAnalysis(analysis) {
   return {
     id: analysis.id,
     name: analysis.name,
+    monthKey: analysisMonthKey(analysis),
     createdAt: analysis.createdAt,
     platform: packDataset(analysis.platform),
     marketplace: packDataset(analysis.marketplace),
@@ -293,6 +295,7 @@ function unpackAnalysis(analysis, index = 0) {
   return {
     id: analysis.id || createAnalysisId(),
     name: analysis.name || inferAnalysisName(platform, marketplace, index),
+    monthKey: analysis.monthKey || inferAnalysisMonthKey(platform, marketplace),
     createdAt: analysis.createdAt || new Date().toISOString(),
     platform,
     marketplace,
@@ -352,19 +355,87 @@ async function saveCurrentAnalysis() {
     return;
   }
 
+  const selectedMonth = refs.analysisMonth?.value || "";
+  if (!selectedMonth) {
+    updateHealth("Selecione o mes para salvar os pedidos", "warning");
+    return;
+  }
+
+  const platform = datasetForMonth(state.platform, "platform", selectedMonth);
+  const marketplace = datasetForMonth(state.marketplace, "marketplace", selectedMonth);
+  if (!platform.rows.length && !marketplace.rows.length) {
+    updateHealth(`Nao encontrei pedidos em ${monthLabel(selectedMonth)} nos arquivos`, "warning");
+    return;
+  }
+
   refs.saveAnalysis.disabled = true;
-  const analysis = {
+  const incoming = {
     id: createAnalysisId(),
-    name: text(refs.analysisName?.value) || inferAnalysisName(state.platform, state.marketplace, state.analyses.length),
+    name: monthLabel(selectedMonth),
+    monthKey: selectedMonth,
     createdAt: new Date().toISOString(),
-    platform: state.platform,
-    marketplace: state.marketplace,
+    platform,
+    marketplace,
   };
 
-  state.analyses.push(analysis);
+  const merged = upsertAnalysisForMonth(incoming);
   clearDraftAnalysis({ keepHealth: true });
   reconcile();
-  await saveSessionToDatabase("Analise salva no banco");
+  await saveSessionToDatabase(merged ? "Pedidos adicionados no mes" : "Mes salvo no banco");
+}
+
+function upsertAnalysisForMonth(incoming) {
+  const existing = state.analyses.find((analysis) => analysisMonthKey(analysis) === incoming.monthKey);
+
+  if (!existing) {
+    state.analyses.push(incoming);
+    return false;
+  }
+
+  existing.monthKey = incoming.monthKey;
+  existing.name = monthLabel(incoming.monthKey);
+  existing.platform = mergeDataset(existing.platform, incoming.platform, "platform");
+  existing.marketplace = mergeDataset(existing.marketplace, incoming.marketplace, "marketplace");
+  return true;
+}
+
+function datasetForMonth(dataset, type, selectedMonth) {
+  const rows = (dataset?.rows || []).filter((row) => rowMonthKey(row) === selectedMonth);
+  return rebuildDataset({
+    ...dataset,
+    rows,
+  }, type);
+}
+
+function mergeDataset(current, incoming, type) {
+  const idField = type === "platform" ? "orderId" : "saleId";
+  const rowsById = new Map();
+
+  (current?.rows || []).forEach((row) => {
+    if (row[idField]) rowsById.set(row[idField], row);
+  });
+  (incoming?.rows || []).forEach((row) => {
+    if (row[idField]) rowsById.set(row[idField], row);
+  });
+
+  return rebuildDataset({
+    fileName: joinUnique([current?.fileName, incoming?.fileName], " | ") || incoming?.fileName || current?.fileName || "Dados salvos",
+    sheetName: incoming?.sheetName || current?.sheetName || "",
+    headerRow: incoming?.headerRow || current?.headerRow || 1,
+    rows: [...rowsById.values()],
+  }, type);
+}
+
+function rebuildDataset(dataset, type) {
+  const idField = type === "platform" ? "orderId" : "saleId";
+  const rows = (dataset?.rows || []).filter((row) => row[idField]);
+  return {
+    fileName: dataset?.fileName || "Dados salvos",
+    sheetName: dataset?.sheetName || "",
+    headerRow: dataset?.headerRow || 1,
+    rows,
+    byId: new Map(rows.map((row) => [row[idField], row])),
+  };
 }
 
 function clearDraftAnalysis(options = {}) {
@@ -374,18 +445,78 @@ function clearDraftAnalysis(options = {}) {
   if (refs.marketplaceFile) refs.marketplaceFile.value = "";
   if (refs.platformFileName) refs.platformFileName.textContent = "Nenhum arquivo selecionado";
   if (refs.marketplaceFileName) refs.marketplaceFileName.textContent = "Nenhum arquivo selecionado";
-  if (refs.analysisName) refs.analysisName.value = "";
   syncDraftState();
   if (!options.keepHealth) updateHealth();
 }
 
 function syncDraftState() {
-  const readyToSave = Boolean(state.platform && state.marketplace);
+  updateAnalysisMonthOptions();
+  const readyToSave = Boolean(state.platform && state.marketplace && refs.analysisMonth?.value);
   if (refs.saveAnalysis) refs.saveAnalysis.disabled = !readyToSave;
   if (refs.analysisCount) {
     const total = state.analyses.length;
     refs.analysisCount.textContent = `${formatInteger(total)} ${total === 1 ? "analise salva" : "analises salvas"}`;
   }
+}
+
+function updateAnalysisMonthOptions() {
+  if (!refs.analysisMonth) return;
+
+  const previous = refs.analysisMonth.value;
+  const savedMonths = state.analyses.map(analysisMonthKey).filter(Boolean);
+  const draftMonths = draftMonthKeys();
+  const months = [...new Set([...draftMonths, ...savedMonths])].sort();
+
+  if (!months.length) {
+    refs.analysisMonth.innerHTML = `<option value="">Importe as planilhas</option>`;
+    refs.analysisMonth.disabled = true;
+    return;
+  }
+
+  const savedSet = new Set(savedMonths);
+  refs.analysisMonth.disabled = false;
+  refs.analysisMonth.innerHTML = [
+    `<option value="">Selecione o mes</option>`,
+    ...months.map((key) => {
+      const suffix = savedSet.has(key) ? " (salvo)" : "";
+      return `<option value="${escapeAttribute(key)}">${escapeHtml(monthLabel(key) + suffix)}</option>`;
+    }),
+  ].join("");
+
+  if (previous && months.includes(previous)) {
+    refs.analysisMonth.value = previous;
+  } else if (draftMonths.length === 1) {
+    refs.analysisMonth.value = draftMonths[0];
+  }
+}
+
+function draftMonthKeys() {
+  return monthKeysFromDatasets(state.platform, state.marketplace);
+}
+
+function analysisMonthKey(analysis) {
+  return isMonthKey(analysis?.monthKey)
+    ? analysis.monthKey
+    : inferAnalysisMonthKey(analysis?.platform, analysis?.marketplace);
+}
+
+function inferAnalysisMonthKey(platform, marketplace) {
+  const months = monthKeysFromDatasets(platform, marketplace);
+  return months.length === 1 ? months[0] : "";
+}
+
+function monthKeysFromDatasets(...datasets) {
+  return [...new Set(datasets.flatMap((dataset) => (
+    (dataset?.rows || []).map(rowMonthKey).filter(isMonthKey)
+  )))].sort();
+}
+
+function rowMonthKey(row) {
+  return monthKey(row?.date || row?.marketplaceDate || row?.platformDate || row?.updatedAt);
+}
+
+function isMonthKey(value) {
+  return /^\d{4}-\d{2}$/.test(String(value || ""));
 }
 
 function applySessionPayload(payload) {
@@ -509,7 +640,6 @@ function resetDashboardState() {
   refs.marketplaceFile.value = "";
   refs.platformFileName.textContent = "Nenhum arquivo selecionado";
   refs.marketplaceFileName.textContent = "Nenhum arquivo selecionado";
-  refs.analysisName.value = "";
   refs.periodPreset.value = "all";
   refs.analysisFilter.value = "all";
   refs.statusFilter.value = "all";
@@ -2370,6 +2500,10 @@ function productKey(row) {
 
 function joinSet(set, separator = ", ") {
   return [...set].filter(Boolean).join(separator);
+}
+
+function joinUnique(values, separator = " | ") {
+  return [...new Set(values.map(text).filter(Boolean))].join(separator);
 }
 
 function firstSetValue(set) {
