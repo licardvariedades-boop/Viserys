@@ -27,6 +27,10 @@
         <button class="icon-button" id="exportCsv" type="button" disabled title="Baixar CSV">
           <i data-lucide="download"></i>
         </button>
+        <button class="icon-button theme-toggle" id="themeToggle" type="button" title="Tema escuro" aria-label="Tema escuro">
+          <i class="theme-icon moon-icon" data-lucide="moon"></i>
+          <i class="theme-icon sun-icon" data-lucide="sun"></i>
+        </button>
       </div>
     </header>
 
@@ -166,13 +170,6 @@
       </section>
 
       <section class="chart-grid" aria-label="Gráficos">
-        <article class="chart-panel wide">
-          <header>
-            <h2>Evolução do período</h2>
-            <span id="dailyHint">Receita, custo e lucro</span>
-          </header>
-          <div class="chart-box"><canvas id="dailyChart"></canvas></div>
-        </article>
         <article class="chart-panel">
           <header>
             <h2>Resultado por status</h2>

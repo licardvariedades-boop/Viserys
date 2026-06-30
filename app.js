@@ -16,6 +16,7 @@ const state = {
 const AUTH_ENDPOINT = "/api/auth";
 const SESSION_ENDPOINT = "/api/session";
 const SESSION_DATE_FIELDS = ["date", "updatedAt", "platformDate", "marketplaceDate"];
+const THEME_STORAGE_KEY = "viserys_theme";
 
 const BR_MONTHS = new Map([
   ["janeiro", 0],
@@ -72,6 +73,7 @@ document.addEventListener("DOMContentLoaded", () => {
     logoutButton: document.querySelector("#logoutButton"),
     exportXlsx: document.querySelector("#exportXlsx"),
     exportCsv: document.querySelector("#exportCsv"),
+    themeToggle: document.querySelector("#themeToggle"),
     periodPreset: document.querySelector("#periodPreset"),
     analysisFilter: document.querySelector("#analysisFilter"),
     yearField: document.querySelector("#yearField"),
@@ -94,7 +96,6 @@ document.addEventListener("DOMContentLoaded", () => {
     kpiProfitSub: document.querySelector("#kpiProfitSub"),
     kpiRoi: document.querySelector("#kpiRoi"),
     kpiTicket: document.querySelector("#kpiTicket"),
-    dailyHint: document.querySelector("#dailyHint"),
     matchRate: document.querySelector("#matchRate"),
     matchedCount: document.querySelector("#matchedCount"),
     platformMissingCount: document.querySelector("#platformMissingCount"),
@@ -131,6 +132,7 @@ document.addEventListener("DOMContentLoaded", () => {
   refs.logoutButton.addEventListener("click", handleLogout);
   refs.exportXlsx.addEventListener("click", exportWorkbook);
   refs.exportCsv.addEventListener("click", exportCsv);
+  refs.themeToggle.addEventListener("click", toggleTheme);
   refs.periodPreset.addEventListener("change", () => {
     syncFilterVisibility();
     applyFilters();
@@ -161,6 +163,7 @@ document.addEventListener("DOMContentLoaded", () => {
   refs.periodPreset.value = "all";
   refs.onlyMatched.checked = true;
   refs.ignoreCanceled.checked = true;
+  applyStoredTheme();
   syncFilterVisibility();
   setupCharts();
   updateFilterOptions();
@@ -171,6 +174,40 @@ document.addEventListener("DOMContentLoaded", () => {
     window.lucide.createIcons();
   }
 });
+
+function applyStoredTheme() {
+  const stored = readStoredTheme();
+  setTheme(stored === "dark" ? "dark" : "light");
+}
+
+function toggleTheme() {
+  const nextTheme = document.body.classList.contains("dark-theme") ? "light" : "dark";
+  setTheme(nextTheme);
+  try {
+    window.localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+  } catch {
+    // Theme preference can fail in private browsing; the button still works for the current page.
+  }
+}
+
+function setTheme(theme) {
+  const dark = theme === "dark";
+  document.body.classList.toggle("dark-theme", dark);
+  if (refs.themeToggle) {
+    const label = dark ? "Tema claro" : "Tema escuro";
+    refs.themeToggle.title = label;
+    refs.themeToggle.setAttribute("aria-label", label);
+  }
+  refreshChartTheme();
+}
+
+function readStoredTheme() {
+  try {
+    return window.localStorage.getItem(THEME_STORAGE_KEY) || "light";
+  } catch {
+    return "light";
+  }
+}
 
 async function handleFile(type, event) {
   const file = event.target.files?.[0];
@@ -1713,6 +1750,7 @@ function setTab(tab) {
 function setupCharts() {
   if (!window.Chart) return;
 
+  const colors = chartPalette();
   const chartDefaults = {
     responsive: true,
     maintainAspectRatio: false,
@@ -1720,7 +1758,7 @@ function setupCharts() {
       legend: {
         labels: {
           boxWidth: 12,
-          color: "#44534a",
+          color: colors.legend,
           font: { size: 12, family: "Inter, system-ui, sans-serif" },
         },
       },
@@ -1733,41 +1771,6 @@ function setupCharts() {
       },
     },
   };
-
-  state.charts.daily = new Chart(document.querySelector("#dailyChart"), {
-    type: "line",
-    data: {
-      labels: [],
-      datasets: [
-        {
-          label: "Recebido",
-          data: [],
-          borderColor: "#1c6aa5",
-          backgroundColor: "rgba(28, 106, 165, 0.12)",
-          tension: 0.25,
-          fill: true,
-        },
-        {
-          label: "Custo",
-          data: [],
-          borderColor: "#a96705",
-          backgroundColor: "rgba(169, 103, 5, 0.10)",
-          tension: 0.25,
-        },
-        {
-          label: "Lucro",
-          data: [],
-          borderColor: "#16794c",
-          backgroundColor: "rgba(22, 121, 76, 0.10)",
-          tension: 0.25,
-        },
-      ],
-    },
-    options: {
-      ...chartDefaults,
-      scales: chartScales("daily"),
-    },
-  });
 
   state.charts.status = new Chart(document.querySelector("#statusChart"), {
     type: "bar",
@@ -1825,8 +1828,9 @@ function setupCharts() {
 }
 
 function chartScales(mode) {
-  const baseGrid = { color: "rgba(102, 115, 107, 0.14)" };
-  const baseTick = { color: "#66736b", maxRotation: 0, autoSkip: true };
+  const colors = chartPalette();
+  const baseGrid = { color: colors.grid };
+  const baseTick = { color: colors.tick, maxRotation: 0, autoSkip: true };
 
   if (mode === "horizontalMoney") {
     return {
@@ -1868,24 +1872,44 @@ function chartScales(mode) {
   };
 }
 
+function chartPalette() {
+  const dark = document.body.classList.contains("dark-theme");
+  return dark
+    ? {
+      legend: "#d6ded9",
+      tick: "#aebbb4",
+      grid: "rgba(214, 222, 217, 0.13)",
+    }
+    : {
+      legend: "#44534a",
+      tick: "#66736b",
+      grid: "rgba(102, 115, 107, 0.14)",
+    };
+}
+
+function refreshChartTheme() {
+  if (!state.charts || !Object.keys(state.charts).length) return;
+
+  const colors = chartPalette();
+  Object.values(state.charts).forEach((chart) => {
+    if (!chart) return;
+    if (chart.options?.plugins?.legend?.labels) {
+      chart.options.plugins.legend.labels.color = colors.legend;
+    }
+    ["x", "y"].forEach((axis) => {
+      const scale = chart.options?.scales?.[axis];
+      if (!scale) return;
+      if (scale.grid) scale.grid.color = colors.grid;
+      if (scale.ticks) scale.ticks.color = colors.tick;
+    });
+    chart.update("none");
+  });
+}
+
 function updateCharts() {
-  if (!window.Chart || !state.charts.daily) return;
+  if (!window.Chart || !state.charts.status) return;
 
   const rows = state.filteredClosing;
-  const groupByMonth = ["all", "year"].includes(refs.periodPreset?.value || "all");
-  const period = aggregate(
-    rows.filter((row) => row.date),
-    (row) => groupByMonth ? monthKey(row.date) : dateKey(row.date),
-    ["netReceived", "cost", "profit"]
-  );
-  const sortedPeriod = [...period.entries()].sort(([a], [b]) => a.localeCompare(b));
-  state.charts.daily.data.labels = sortedPeriod.map(([key]) => groupByMonth ? monthLabel(key) : formatShortDateKey(key));
-  state.charts.daily.data.datasets[0].data = sortedPeriod.map(([, item]) => round2(item.netReceived));
-  state.charts.daily.data.datasets[1].data = sortedPeriod.map(([, item]) => round2(item.cost));
-  state.charts.daily.data.datasets[2].data = sortedPeriod.map(([, item]) => round2(item.profit));
-  state.charts.daily.data.datasets[2].borderColor = sortedPeriod.some(([, item]) => item.profit < 0) ? "#ba3b3b" : "#16794c";
-  state.charts.daily.update();
-  refs.dailyHint.textContent = `${formatInteger(rows.length)} vendas filtradas`;
 
   const byStatus = aggregate(rows, (row) => row.status || "Sem status", ["profit"]);
   const statusRows = [...byStatus.entries()]
