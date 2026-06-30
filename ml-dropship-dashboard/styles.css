@@ -415,14 +415,6 @@ h2 {
   box-shadow: 0 0 0 3px rgba(22, 121, 76, 0.14);
 }
 
-.tax-rate-field {
-  max-width: 130px;
-}
-
-.tax-rate-field input {
-  text-align: right;
-}
-
 .switch {
   display: inline-flex;
   height: 40px;
@@ -738,6 +730,10 @@ th.money {
   min-width: 130px;
 }
 
+.editable-tax-cell {
+  min-width: 112px;
+}
+
 .money-editor {
   width: 104px;
   min-height: 32px;
@@ -761,6 +757,10 @@ th.money {
 .money-editor.adjusted {
   border-color: rgba(22, 121, 76, 0.58);
   background: #f5fbf7;
+}
+
+.tax-rate-editor {
+  width: 82px;
 }
 
 .total-row td {

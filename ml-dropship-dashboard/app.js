@@ -1,7 +1,7 @@
 const state = {
   analyses: [],
   manualAdjustments: {},
-  taxRate: 0,
+  taxRates: {},
   platform: null,
   marketplace: null,
   rows: [],
@@ -84,7 +84,6 @@ document.addEventListener("DOMContentLoaded", () => {
     endDate: document.querySelector("#endDate"),
     statusFilter: document.querySelector("#statusFilter"),
     productSearch: document.querySelector("#productSearch"),
-    taxRate: document.querySelector("#taxRate"),
     onlyMatched: document.querySelector("#onlyMatched"),
     ignoreCanceled: document.querySelector("#ignoreCanceled"),
     kpiNet: document.querySelector("#kpiNet"),
@@ -153,10 +152,10 @@ document.addEventListener("DOMContentLoaded", () => {
   refs.tabClosing.addEventListener("click", () => setTab("closing"));
   refs.tabDiff.addEventListener("click", () => setTab("diff"));
   refs.tabTax.addEventListener("click", () => setTab("tax"));
-  refs.taxRate.addEventListener("input", handleTaxRateInput);
-  refs.taxRate.addEventListener("blur", syncTaxRateInput);
   refs.resultBody.addEventListener("input", handleDiffAdjustmentInput);
+  refs.resultBody.addEventListener("input", handleTaxRateInput);
   refs.resultBody.addEventListener("blur", handleDiffAdjustmentBlur, true);
+  refs.resultBody.addEventListener("blur", handleTaxRateBlur, true);
   refs.productSummaryBody.addEventListener("click", handleProductSummaryClick);
 
   refs.periodPreset.value = "all";
@@ -210,7 +209,7 @@ function buildSessionPayload() {
     savedAt: new Date().toISOString(),
     analyses: state.analyses.map(packAnalysis),
     manualAdjustments: packManualAdjustments(),
-    taxRate: state.taxRate,
+    taxRates: packTaxRates(),
   };
 }
 
@@ -290,6 +289,26 @@ function normalizeManualAdjustments(source = {}) {
   }, {});
 }
 
+function packTaxRates() {
+  return normalizeTaxRates(state.taxRates);
+}
+
+function normalizeTaxRates(source = {}, legacyRate = null) {
+  const rates = Object.entries(source || {}).reduce((items, [key, value]) => {
+    const rate = normalizeTaxRate(value);
+    if (key === "default") {
+      if (rate > 0) items[key] = rate;
+    } else {
+      items[key] = rate;
+    }
+    return items;
+  }, {});
+
+  const fallback = normalizeTaxRate(legacyRate);
+  if (fallback > 0 && !Object.keys(rates).length) rates.default = fallback;
+  return rates;
+}
+
 async function saveCurrentAnalysis() {
   if (!state.platform || !state.marketplace) {
     updateHealth("Selecione as duas planilhas antes de salvar", "warning");
@@ -334,8 +353,7 @@ function syncDraftState() {
 
 function applySessionPayload(payload) {
   state.manualAdjustments = normalizeManualAdjustments(payload?.manualAdjustments);
-  state.taxRate = normalizeTaxRate(payload?.taxRate);
-  syncTaxRateInput();
+  state.taxRates = normalizeTaxRates(payload?.taxRates, payload?.taxRate);
 
   const savedAnalyses = Array.isArray(payload?.analyses)
     ? payload.analyses
@@ -442,7 +460,7 @@ function setLoggedOutUi() {
 function resetDashboardState() {
   state.analyses = [];
   state.manualAdjustments = {};
-  state.taxRate = 0;
+  state.taxRates = {};
   state.expandedProducts.clear();
   state.platform = null;
   state.marketplace = null;
@@ -459,7 +477,6 @@ function resetDashboardState() {
   refs.analysisFilter.value = "all";
   refs.statusFilter.value = "all";
   refs.productSearch.value = "";
-  syncTaxRateInput();
   refs.onlyMatched.checked = true;
   refs.ignoreCanceled.checked = true;
   syncFilterVisibility();
@@ -1155,9 +1172,11 @@ function taxSummaryRows(rows = state.filteredClosing) {
 
   return [...map.values()]
     .map((item) => {
-      const tax = item.gross * taxRateDecimal();
+      const rate = taxRateForMonth(item.key);
+      const tax = item.gross * (rate / 100);
       return {
         ...item,
+        rate,
         tax,
         afterTax: item.gross - tax,
       };
@@ -1166,20 +1185,24 @@ function taxSummaryRows(rows = state.filteredClosing) {
 }
 
 function taxSummaryTotal(rows = taxSummaryRows()) {
-  return rows.reduce((total, row) => {
-    total.sales += row.sales;
-    total.gross += row.gross;
-    total.netReceived += row.netReceived;
-    total.tax += row.tax;
-    total.afterTax += row.afterTax;
-    return total;
+  const total = rows.reduce((acc, row) => {
+    acc.sales += row.sales;
+    acc.gross += row.gross;
+    acc.netReceived += row.netReceived;
+    acc.tax += row.tax;
+    acc.afterTax += row.afterTax;
+    return acc;
   }, {
     sales: 0,
     gross: 0,
     netReceived: 0,
     tax: 0,
     afterTax: 0,
+    effectiveRate: 0,
   });
+
+  total.effectiveRate = total.gross ? (total.tax / total.gross) * 100 : 0;
+  return total;
 }
 
 function taxGrossValue(row) {
@@ -1189,19 +1212,57 @@ function taxGrossValue(row) {
   return gross || Number(row.netReceived) || 0;
 }
 
-function taxRateDecimal() {
-  return normalizeTaxRate(state.taxRate) / 100;
+function taxRateForMonth(key) {
+  return normalizeTaxRate(state.taxRates[key] ?? state.taxRates.default ?? 0);
 }
 
-function handleTaxRateInput() {
-  state.taxRate = normalizeTaxRate(parseMoney(refs.taxRate.value));
-  renderAll();
+function handleTaxRateInput(event) {
+  const input = event.target.closest("[data-tax-rate-key]");
+  if (!input) return;
+
+  const key = input.dataset.taxRateKey;
+  setTaxRateForMonth(key, parseMoney(input.value));
+  updateRenderedTaxAmounts(key);
   scheduleSessionSave("Alíquota salva no banco");
 }
 
-function syncTaxRateInput() {
-  if (!refs.taxRate) return;
-  refs.taxRate.value = formatEditableMoney(normalizeTaxRate(state.taxRate));
+function handleTaxRateBlur(event) {
+  const input = event.target.closest("[data-tax-rate-key]");
+  if (!input) return;
+  input.value = formatEditableMoney(taxRateForMonth(input.dataset.taxRateKey));
+  updateRenderedTaxAmounts(input.dataset.taxRateKey);
+}
+
+function setTaxRateForMonth(key, value) {
+  const rate = normalizeTaxRate(value);
+  state.taxRates[key] = rate;
+}
+
+function updateRenderedTaxAmounts(key) {
+  const rows = taxSummaryRows();
+  const row = rows.find((item) => item.key === key);
+  const totals = taxSummaryTotal(rows);
+  const rowElement = refs.resultBody.querySelector(`[data-tax-row-key="${key}"]`);
+
+  if (rowElement && row) {
+    setTaxCell(rowElement, "tax", formatMoney(row.tax));
+    setTaxCell(rowElement, "afterTax", formatMoney(row.afterTax));
+  }
+
+  const totalElement = refs.resultBody.querySelector("[data-tax-total]");
+  if (totalElement) {
+    setTaxCell(totalElement, "sales", formatInteger(totals.sales));
+    setTaxCell(totalElement, "gross", formatMoney(totals.gross));
+    setTaxCell(totalElement, "netReceived", formatMoney(totals.netReceived));
+    setTaxCell(totalElement, "effectiveRate", formatTaxRate(totals.effectiveRate));
+    setTaxCell(totalElement, "tax", formatMoney(totals.tax));
+    setTaxCell(totalElement, "afterTax", formatMoney(totals.afterTax));
+  }
+}
+
+function setTaxCell(rowElement, name, value) {
+  const cell = rowElement.querySelector(`[data-tax-cell="${name}"]`);
+  if (cell) cell.textContent = value;
 }
 
 function renderProductSummary() {
@@ -1480,28 +1541,42 @@ function renderTaxTable() {
 
   refs.resultBody.innerHTML = [
     ...rows.map((row) => `
-      <tr>
+      <tr data-tax-row-key="${escapeAttribute(row.key)}">
         <td><strong>${escapeHtml(row.label)}</strong></td>
         <td class="money">${formatInteger(row.sales)}</td>
         <td class="money">${formatMoney(row.gross)}</td>
         <td class="money">${formatMoney(row.netReceived)}</td>
-        <td class="money">${formatTaxRate(state.taxRate)}</td>
-        <td class="money negative">${formatMoney(row.tax)}</td>
-        <td class="money">${formatMoney(row.afterTax)}</td>
+        <td class="money editable-tax-cell">${renderTaxRateEditor(row)}</td>
+        <td class="money negative" data-tax-cell="tax">${formatMoney(row.tax)}</td>
+        <td class="money" data-tax-cell="afterTax">${formatMoney(row.afterTax)}</td>
       </tr>
     `),
     `
-      <tr class="total-row">
+      <tr class="total-row" data-tax-total>
         <td><strong>Total filtrado</strong></td>
-        <td class="money">${formatInteger(totals.sales)}</td>
-        <td class="money">${formatMoney(totals.gross)}</td>
-        <td class="money">${formatMoney(totals.netReceived)}</td>
-        <td class="money">${formatTaxRate(state.taxRate)}</td>
-        <td class="money negative">${formatMoney(totals.tax)}</td>
-        <td class="money">${formatMoney(totals.afterTax)}</td>
+        <td class="money" data-tax-cell="sales">${formatInteger(totals.sales)}</td>
+        <td class="money" data-tax-cell="gross">${formatMoney(totals.gross)}</td>
+        <td class="money" data-tax-cell="netReceived">${formatMoney(totals.netReceived)}</td>
+        <td class="money" data-tax-cell="effectiveRate">${formatTaxRate(totals.effectiveRate)}</td>
+        <td class="money negative" data-tax-cell="tax">${formatMoney(totals.tax)}</td>
+        <td class="money" data-tax-cell="afterTax">${formatMoney(totals.afterTax)}</td>
       </tr>
     `,
   ].join("");
+}
+
+function renderTaxRateEditor(row) {
+  return `
+    <input
+      class="money-editor tax-rate-editor"
+      type="text"
+      inputmode="decimal"
+      autocomplete="off"
+      aria-label="${escapeAttribute(`Alíquota de ${row.label}`)}"
+      data-tax-rate-key="${escapeAttribute(row.key)}"
+      value="${escapeAttribute(formatEditableMoney(row.rate))}"
+    />
+  `;
 }
 
 function renderMoneyEditor(row, field) {
@@ -1854,7 +1929,7 @@ function exportWorkbook() {
     ["Margem", round2(metrics.margin)],
     ["ROI", round2(metrics.roi)],
     ["Valor bruto fiscal", round2(taxTotals.gross)],
-    ["Aliquota imposto", formatTaxRate(state.taxRate)],
+    ["Aliquota efetiva imposto", formatTaxRate(taxTotals.effectiveRate)],
     ["Imposto governo", round2(taxTotals.tax)],
     ["Pedidos sem Mercado Livre", state.filteredDiffs.filter((row) => row.source === "platform").length],
     ["Mercado Livre sem pedido", state.filteredDiffs.filter((row) => row.source === "marketplace").length],
@@ -1945,7 +2020,7 @@ function toTaxExportRow(item) {
     "Vendas": item.sales,
     "Valor Bruto": round2(item.gross),
     "Recebido Liquido": round2(item.netReceived),
-    "Aliquota Imposto": formatTaxRate(state.taxRate),
+    "Aliquota Imposto": formatTaxRate(item.rate),
     "Imposto Governo": round2(item.tax),
     "Bruto Apos Imposto": round2(item.afterTax),
   };
