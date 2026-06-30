@@ -1083,7 +1083,7 @@ function renderAll(options = {}) {
 }
 
 function renderKpis() {
-  const rows = state.filteredClosing;
+  const rows = financialRows();
   const net = sum(rows, "netReceived");
   const cost = sum(rows, "cost");
   const profit = net - cost;
@@ -1129,11 +1129,12 @@ function financialBaseLabel() {
   const parts = [];
   if (refs.onlyMatched?.checked) parts.push("conciliada");
   if (refs.ignoreCanceled?.checked) parts.push("sem canceladas");
+  parts.push("sem devoluções");
   return parts.length ? `base ${parts.join(" · ")}` : "base filtrada";
 }
 
 function renderBreakdown() {
-  const rows = state.filteredClosing;
+  const rows = financialRows();
   refs.grossProductTotal.textContent = formatMoney(sum(rows, "grossProduct"));
   refs.priceIncreaseTotal.textContent = formatMoney(sum(rows, "priceIncrease"));
   refs.saleFeeTotal.textContent = formatMoney(sum(rows, "saleFee"));
@@ -1148,9 +1149,15 @@ function renderBreakdown() {
   refs.checkDiffTotal.textContent = formatMoney(sum(rows, "checkDiff"));
 }
 
-function taxSummaryRows(rows = state.filteredClosing) {
+function financialRows(rows = state.filteredClosing) {
+  return rows.filter((row) => !isReturned(row));
+}
+
+function taxSummaryRows(rows = financialRows()) {
   const map = new Map();
   rows.forEach((row) => {
+    if (isReturned(row)) return;
+
     const key = monthKey(row.date) || "sem-data";
     if (!map.has(key)) {
       map.set(key, {
@@ -1206,6 +1213,7 @@ function taxSummaryTotal(rows = taxSummaryRows()) {
 }
 
 function taxGrossValue(row) {
+  if (isReturned(row)) return 0;
   const gross = (Number(row.grossProduct) || 0)
     + (Number(row.priceIncrease) || 0)
     + (Number(row.shippingIncome) || 0);
@@ -1268,7 +1276,7 @@ function setTaxCell(rowElement, name, value) {
 function renderProductSummary() {
   if (!refs.productSummaryBody) return;
 
-  const products = productSummaryRows(state.filteredClosing);
+  const products = productSummaryRows(financialRows());
   const visibleProducts = products.slice(0, 60);
   refs.productSummaryCount.textContent = `${formatInteger(products.length)} ${products.length === 1 ? "produto" : "produtos"}`;
 
@@ -1911,6 +1919,7 @@ function exportWorkbook() {
 
   const metrics = currentMetrics();
   const taxTotals = taxSummaryTotal();
+  const returnsIgnored = state.filteredClosing.filter(isReturned).length;
   const selectedAnalysis = state.analyses.find((analysis) => analysis.id === refs.analysisFilter?.value);
   const cancelledIgnored = refs.ignoreCanceled?.checked
     ? [...state.rows, ...state.mlOnly].filter((row) => isCancelled(row) && matchesFilters(row, false, false)).length
@@ -1922,6 +1931,8 @@ function exportWorkbook() {
     ["Arquivos Mercado Livre", state.analyses.map((analysis) => analysis.marketplace.fileName).join(" | ")],
     ["Modo do fechamento", financialBaseLabel()],
     ["Registros filtrados", state.filteredClosing.length],
+    ["Registros financeiros", financialRows().length],
+    ["Devolucoes retiradas dos calculos", returnsIgnored],
     ["Canceladas ignoradas", cancelledIgnored],
     ["Recebido líquido", round2(metrics.net)],
     ["Custo de produtos", round2(metrics.cost)],
@@ -1938,7 +1949,7 @@ function exportWorkbook() {
   const wb = window.XLSX.utils.book_new();
   window.XLSX.utils.book_append_sheet(wb, window.XLSX.utils.aoa_to_sheet(summary), "Resumo");
   window.XLSX.utils.book_append_sheet(wb, window.XLSX.utils.json_to_sheet(taxSummaryRows().map(toTaxExportRow)), "Impostos");
-  window.XLSX.utils.book_append_sheet(wb, window.XLSX.utils.json_to_sheet(productSummaryRows(state.filteredClosing).map(toProductExportRow)), "Produtos");
+  window.XLSX.utils.book_append_sheet(wb, window.XLSX.utils.json_to_sheet(productSummaryRows(financialRows()).map(toProductExportRow)), "Produtos");
   window.XLSX.utils.book_append_sheet(wb, window.XLSX.utils.json_to_sheet(state.filteredClosing.map(toExportRow)), "Fechamento");
   window.XLSX.utils.book_append_sheet(wb, window.XLSX.utils.json_to_sheet(state.filteredDiffs.map(toExportRow)), "Divergencias");
   window.XLSX.writeFile(wb, `fechamento_dropshipping_${dateStamp()}.xlsx`);
@@ -2027,7 +2038,7 @@ function toTaxExportRow(item) {
 }
 
 function currentMetrics() {
-  const rows = state.filteredClosing;
+  const rows = financialRows();
   const net = sum(rows, "netReceived");
   const cost = sum(rows, "cost");
   const profit = net - cost;
@@ -2357,9 +2368,20 @@ function isCancelled(row) {
   return haystack.includes("cancel") || haystack.includes("nao despache");
 }
 
+function isReturned(row) {
+  const haystack = normalizeText([
+    row.status,
+    row.statusDescription,
+    row.marketplaceStatus,
+    row.platformStatus,
+  ].join(" "));
+  return haystack.includes("devolu");
+}
+
 function statusClass(row) {
   if (!row.matched && row.source === "platform") return "bad";
   if (isCancelled(row)) return "bad";
+  if (isReturned(row)) return "bad";
   if (row.matched) return "ok";
   return "";
 }
