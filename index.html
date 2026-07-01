@@ -4,11 +4,11 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Fechamento Dropshipping Mercado Livre</title>
-    <link rel="stylesheet" href="./styles.css?v=20260630-4" />
+    <link rel="stylesheet" href="./styles.css?v=20260630-5" />
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js" defer></script>
     <script src="https://unpkg.com/lucide@latest" defer></script>
-    <script src="./app.js?v=20260630-4" defer></script>
+    <script src="./app.js?v=20260630-5" defer></script>
   </head>
   <body>
     <header class="topbar">
@@ -86,21 +86,16 @@
           <div class="field">
             <label for="analysisMonth">Mês para salvar/acrescentar</label>
             <select id="analysisMonth"></select>
-            <small class="month-hint" id="monthHint">Escolha um m&ecirc;s salvo ou importe planilhas para criar um novo m&ecirc;s.</small>
+            <small class="month-hint" id="monthHint">Escolha o m&ecirc;s, carregue pedidos e Mercado Livre nos cards, e clique em Adicionar planilha.</small>
           </div>
           <div class="analysis-actions">
             <button class="action-button secondary-action" id="newAnalysis" type="button">
               <i data-lucide="plus"></i>Nova análise
             </button>
-            <label class="action-button secondary-action file-action" for="extraFile">
-              <input id="extraFile" type="file" accept=".xlsx,.xls,.csv" multiple />
-              <i data-lucide="file-plus-2"></i><span>Adicionar planilha</span>
-            </label>
             <button class="action-button" id="saveAnalysis" type="button" disabled>
-              <i data-lucide="save"></i><span id="saveAnalysisText">Salvar mês</span>
+              <i data-lucide="file-plus-2"></i><span>Adicionar planilha</span>
             </button>
           </div>
-          <small class="analysis-count" id="extraFileName">Nenhuma planilha extra adicionada</small>
           <small class="analysis-count" id="analysisCount">0 análises salvas</small>
         </div>
       </section>

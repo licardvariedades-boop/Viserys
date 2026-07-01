@@ -60,15 +60,12 @@ document.addEventListener("DOMContentLoaded", () => {
   refs = {
     platformFile: document.querySelector("#platformFile"),
     marketplaceFile: document.querySelector("#marketplaceFile"),
-    extraFile: document.querySelector("#extraFile"),
     platformFileName: document.querySelector("#platformFileName"),
     marketplaceFileName: document.querySelector("#marketplaceFileName"),
-    extraFileName: document.querySelector("#extraFileName"),
     analysisMonth: document.querySelector("#analysisMonth"),
     monthHint: document.querySelector("#monthHint"),
     newAnalysis: document.querySelector("#newAnalysis"),
     saveAnalysis: document.querySelector("#saveAnalysis"),
-    saveAnalysisText: document.querySelector("#saveAnalysisText"),
     analysisCount: document.querySelector("#analysisCount"),
     healthPanel: document.querySelector("#healthPanel"),
     loginScreen: document.querySelector("#loginScreen"),
@@ -135,7 +132,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
   refs.platformFile.addEventListener("change", (event) => handleFile("platform", event));
   refs.marketplaceFile.addEventListener("change", (event) => handleFile("marketplace", event));
-  refs.extraFile?.addEventListener("change", handleExtraFile);
   refs.newAnalysis.addEventListener("click", clearDraftAnalysis);
   refs.saveAnalysis.addEventListener("click", saveCurrentAnalysis);
   refs.analysisMonth.addEventListener("change", syncDraftState);
@@ -259,10 +255,8 @@ function restoreUndoSnapshot(snapshot) {
 
   if (refs.platformFile) refs.platformFile.value = "";
   if (refs.marketplaceFile) refs.marketplaceFile.value = "";
-  if (refs.extraFile) refs.extraFile.value = "";
   updateDatasetFileLabel("platform");
   updateDatasetFileLabel("marketplace");
-  updateExtraFileLabel();
   syncDraftState();
 }
 
@@ -323,89 +317,6 @@ async function handleFile(type, event) {
   } finally {
     event.target.value = "";
   }
-}
-
-async function handleExtraFile(event) {
-  const files = [...(event.target.files || [])];
-  if (!files.length) return;
-
-  const fileWord = files.length === 1 ? "planilha" : "planilhas";
-  if (refs.extraFileName) refs.extraFileName.textContent = `Processando ${formatInteger(files.length)} ${fileWord}...`;
-  updateHealth(`Processando ${formatInteger(files.length)} ${fileWord} extra...`);
-
-  try {
-    if (!window.XLSX) {
-      throw new Error("A biblioteca de Excel nao carregou. Verifique a conexao com a internet.");
-    }
-
-    const grouped = { platform: null, marketplace: null };
-    const added = { platform: 0, marketplace: 0 };
-
-    for (const file of files) {
-      const workbook = await readWorkbook(file);
-      const parsed = parseWorkbookByType(workbook, file.name);
-      grouped[parsed.type] = mergeDataset(grouped[parsed.type], parsed.dataset, parsed.type);
-      added[parsed.type] += 1;
-    }
-
-    pushUndoState("Planilha extra adicionada");
-    if (grouped.platform) state.platform = mergeDataset(state.platform, grouped.platform, "platform");
-    if (grouped.marketplace) state.marketplace = mergeDataset(state.marketplace, grouped.marketplace, "marketplace");
-
-    updateDatasetFileLabel("platform");
-    updateDatasetFileLabel("marketplace");
-    updateExtraFileLabel(added);
-    syncDraftState();
-    updateHealth("Planilha extra adicionada");
-  } catch (error) {
-    console.error(error);
-    if (refs.extraFileName) refs.extraFileName.textContent = `Erro: ${files.map((file) => file.name).join(" | ")}`;
-    syncDraftState();
-    updateHealth(error.message, "warning");
-    renderAll();
-  } finally {
-    event.target.value = "";
-  }
-}
-
-function parseWorkbookByType(workbook, fileName) {
-  const errors = [];
-
-  try {
-    return {
-      type: "platform",
-      dataset: parsePlatformWorkbook(workbook, fileName),
-    };
-  } catch (error) {
-    errors.push(error.message);
-  }
-
-  try {
-    return {
-      type: "marketplace",
-      dataset: parseMarketplaceWorkbook(workbook, fileName),
-    };
-  } catch (error) {
-    errors.push(error.message);
-  }
-
-  throw new Error(`Nao consegui identificar o tipo da planilha ${fileName}. ${errors.join(" ")}`);
-}
-
-function updateExtraFileLabel(added = null) {
-  if (!refs.extraFileName) return;
-
-  if (!added) {
-    refs.extraFileName.textContent = "Nenhuma planilha extra adicionada";
-    return;
-  }
-
-  const parts = [];
-  if (added.platform) parts.push(`${formatInteger(added.platform)} de pedidos`);
-  if (added.marketplace) parts.push(`${formatInteger(added.marketplace)} do Mercado Livre`);
-  refs.extraFileName.textContent = parts.length
-    ? `Adicionado: ${parts.join(" e ")}`
-    : "Nenhuma planilha extra adicionada";
 }
 
 async function parseFilesAsDataset(type, files) {
@@ -567,15 +478,15 @@ async function saveCurrentAnalysis() {
     return;
   }
 
-  const platform = state.platform ? datasetForMonth(state.platform, "platform", selectedMonth) : null;
-  const marketplace = state.marketplace ? datasetForMonth(state.marketplace, "marketplace", selectedMonth) : null;
+  const platform = datasetForSelectedMonthOrAll(state.platform, "platform", selectedMonth);
+  const marketplace = datasetForSelectedMonthOrAll(state.marketplace, "marketplace", selectedMonth);
   if (!platform?.rows.length && !marketplace?.rows.length) {
     updateHealth(`Nao encontrei registros em ${monthLabel(selectedMonth)} nas planilhas adicionadas`, "warning");
     return;
   }
 
   const willMerge = Boolean(state.analyses.find((analysis) => analysisMonthKey(analysis) === selectedMonth));
-  pushUndoState(willMerge ? "Acréscimo no mês" : "Mês salvo");
+  pushUndoState(willMerge ? "Planilha adicionada ao mês" : "Mês salvo");
   refs.saveAnalysis.disabled = true;
   const incoming = {
     id: createAnalysisId(),
@@ -589,7 +500,7 @@ async function saveCurrentAnalysis() {
   const merged = upsertAnalysisForMonth(incoming);
   clearDraftAnalysis({ keepHealth: true });
   reconcile();
-  await saveSessionToDatabase(merged ? "Planilhas acrescentadas no mes" : "Mes salvo no banco");
+  await saveSessionToDatabase(merged ? "Planilha adicionada ao mes" : "Mes salvo no banco");
 }
 
 function upsertAnalysisForMonth(incoming) {
@@ -622,6 +533,12 @@ function datasetForMonth(dataset, type, selectedMonth) {
     ...dataset,
     rows,
   }, type);
+}
+
+function datasetForSelectedMonthOrAll(dataset, type, selectedMonth) {
+  if (!dataset) return null;
+  const filtered = datasetForMonth(dataset, type, selectedMonth);
+  return filtered.rows.length ? filtered : rebuildDataset(dataset, type);
 }
 
 function emptyDataset(type) {
@@ -677,10 +594,8 @@ function clearDraftAnalysis(options = {}) {
   state.marketplace = null;
   if (refs.platformFile) refs.platformFile.value = "";
   if (refs.marketplaceFile) refs.marketplaceFile.value = "";
-  if (refs.extraFile) refs.extraFile.value = "";
   if (refs.platformFileName) refs.platformFileName.textContent = "Nenhum arquivo selecionado";
   if (refs.marketplaceFileName) refs.marketplaceFileName.textContent = "Nenhum arquivo selecionado";
-  updateExtraFileLabel();
   syncDraftState();
   if (!options.keepHealth) updateHealth();
 }
@@ -688,22 +603,13 @@ function clearDraftAnalysis(options = {}) {
 function syncDraftState() {
   updateAnalysisMonthOptions();
   const selectedMonth = refs.analysisMonth?.value || "";
-  const draft = selectedMonth ? draftMonthStats().get(selectedMonth) : null;
-  const readyToSave = Boolean(selectedMonth && (draft?.platform || draft?.marketplace));
+  const readyToSave = Boolean(selectedMonth && (state.platform?.rows?.length || state.marketplace?.rows?.length));
   if (refs.saveAnalysis) refs.saveAnalysis.disabled = !readyToSave;
   if (refs.analysisCount) {
     const total = state.analyses.length;
     refs.analysisCount.textContent = `${formatInteger(total)} ${total === 1 ? "analise salva" : "analises salvas"}`;
   }
-  updateSaveAnalysisText();
   updateMonthHint();
-}
-
-function updateSaveAnalysisText() {
-  if (!refs.saveAnalysisText) return;
-  const selectedMonth = refs.analysisMonth?.value || "";
-  const saved = selectedMonth ? savedMonthStats().get(selectedMonth) : null;
-  refs.saveAnalysisText.textContent = saved?.saved ? "Acrescentar no mes" : "Salvar mes";
 }
 
 function updateAnalysisMonthOptions() {
@@ -767,8 +673,8 @@ function updateMonthHint() {
   const selectedMonth = refs.analysisMonth?.value || "";
   if (!selectedMonth) {
     refs.monthHint.textContent = state.platform || state.marketplace
-      ? "Escolha o mes que vai receber as planilhas adicionadas."
-      : "Escolha um mes salvo ou importe uma planilha para criar um novo mes.";
+      ? "Escolha o mes que vai receber as planilhas e clique em Adicionar planilha."
+      : "Escolha o mes, carregue pedidos e Mercado Livre nos cards, e clique em Adicionar planilha.";
     return;
   }
 
@@ -779,14 +685,14 @@ function updateMonthHint() {
 
   if (hasDraft) {
     const action = hasSaved
-      ? "Ao clicar em Acrescentar, estes registros entram no mes ja salvo."
-      : "Ao salvar, cria um mes novo no banco.";
+      ? "Ao clicar em Adicionar planilha, este lote entra no mes escolhido."
+      : "Ao clicar em Adicionar planilha, cria um mes novo no banco.";
     refs.monthHint.textContent = `${monthLabel(selectedMonth)}: ${formatInteger(draft.platform)} pedidos e ${formatInteger(draft.marketplace)} vendas ML neste lote. ${action}`;
     return;
   }
 
   if (hasSaved) {
-    refs.monthHint.textContent = `${monthLabel(selectedMonth)} ja tem ${formatInteger(saved.savedPlatform)} pedidos e ${formatInteger(saved.savedMarketplace)} vendas ML salvas. Adicione uma nova planilha desse mes para acrescentar.`;
+    refs.monthHint.textContent = `${monthLabel(selectedMonth)} ja tem ${formatInteger(saved.savedPlatform)} pedidos e ${formatInteger(saved.savedMarketplace)} vendas ML salvas. Carregue os arquivos nos cards e clique em Adicionar planilha.`;
     return;
   }
 
@@ -994,10 +900,8 @@ function resetDashboardState() {
   clearUndoHistory();
   refs.platformFile.value = "";
   refs.marketplaceFile.value = "";
-  if (refs.extraFile) refs.extraFile.value = "";
   refs.platformFileName.textContent = "Nenhum arquivo selecionado";
   refs.marketplaceFileName.textContent = "Nenhum arquivo selecionado";
-  updateExtraFileLabel();
   refs.periodPreset.value = "all";
   refs.statusFilter.value = "all";
   refs.productSearch.value = "";
