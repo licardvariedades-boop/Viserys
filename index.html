@@ -4,11 +4,11 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Fechamento Dropshipping Mercado Livre</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles.css?v=20260630-3" />
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" defer></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js" defer></script>
     <script src="https://unpkg.com/lucide@latest" defer></script>
-    <script src="./app.js" defer></script>
+    <script src="./app.js?v=20260630-3" defer></script>
   </head>
   <body>
     <header class="topbar">
@@ -56,22 +56,22 @@
     <main class="app-shell">
       <section class="import-band" aria-label="Importação">
         <label class="upload-tile" for="platformFile">
-          <input id="platformFile" type="file" accept=".xlsx,.xls,.csv" />
+          <input id="platformFile" type="file" accept=".xlsx,.xls,.csv" multiple />
           <span class="upload-icon"><i data-lucide="package-check"></i></span>
           <span>
             <strong>Planilha de pedidos</strong>
             <small id="platformFileName">Nenhum arquivo selecionado</small>
-            <span class="upload-cta"><i data-lucide="upload"></i>Selecionar arquivo</span>
+            <span class="upload-cta"><i data-lucide="upload"></i>Adicionar arquivo(s)</span>
           </span>
         </label>
 
         <label class="upload-tile" for="marketplaceFile">
-          <input id="marketplaceFile" type="file" accept=".xlsx,.xls,.csv" />
+          <input id="marketplaceFile" type="file" accept=".xlsx,.xls,.csv" multiple />
           <span class="upload-icon"><i data-lucide="badge-dollar-sign"></i></span>
           <span>
             <strong>Relatório Mercado Livre</strong>
             <small id="marketplaceFileName">Nenhum arquivo selecionado</small>
-            <span class="upload-cta"><i data-lucide="upload"></i>Selecionar arquivo</span>
+            <span class="upload-cta"><i data-lucide="upload"></i>Adicionar arquivo(s)</span>
           </span>
         </label>
 
@@ -81,26 +81,28 @@
             <span>Selecione as duas planilhas para criar uma nova análise.</span>
           </div>
           <div class="field">
-            <label for="analysisMonth">Mês para salvar</label>
+            <label for="analysisMonth">Mês para salvar/acrescentar</label>
             <select id="analysisMonth"></select>
+            <small class="month-hint" id="monthHint">Escolha um m&ecirc;s salvo ou importe planilhas para criar um novo m&ecirc;s.</small>
           </div>
           <div class="analysis-actions">
             <button class="action-button secondary-action" id="newAnalysis" type="button">
               <i data-lucide="plus"></i>Nova análise
             </button>
+            <label class="action-button secondary-action file-action" for="extraFile">
+              <input id="extraFile" type="file" accept=".xlsx,.xls,.csv" multiple />
+              <i data-lucide="file-plus-2"></i><span>Adicionar planilha</span>
+            </label>
             <button class="action-button" id="saveAnalysis" type="button" disabled>
-              <i data-lucide="save"></i>Salvar mês
+              <i data-lucide="save"></i><span id="saveAnalysisText">Salvar mês</span>
             </button>
           </div>
+          <small class="analysis-count" id="extraFileName">Nenhuma planilha extra adicionada</small>
           <small class="analysis-count" id="analysisCount">0 análises salvas</small>
         </div>
       </section>
 
       <section class="filters" aria-label="Filtros">
-        <div class="field">
-          <label for="analysisFilter">Análise</label>
-          <select id="analysisFilter"></select>
-        </div>
         <div class="field">
           <label for="periodPreset">Período</label>
           <select id="periodPreset">

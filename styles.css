@@ -312,6 +312,19 @@ h2 {
   stroke-width: 2.4;
 }
 
+.analysis-panel {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.analysis-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .health-panel {
   display: flex;
   min-height: 94px;
@@ -412,6 +425,19 @@ h2 {
   stroke-width: 2.4;
 }
 
+.file-action {
+  position: relative;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.file-action input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
 .cloud-status {
   min-height: 40px;
   display: flex;
@@ -432,13 +458,22 @@ h2 {
 }
 
 .filters {
-  grid-template-columns: 150px 140px 140px 140px 150px minmax(190px, 1fr) auto auto;
+  grid-template-columns: 140px 140px minmax(190px, 1fr) auto auto;
   align-items: end;
   margin-top: 16px;
   padding: 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--glass-bg);
+}
+
+.filters.period-year,
+.filters.period-month {
+  grid-template-columns: 140px 140px 140px minmax(190px, 1fr) auto auto;
+}
+
+.filters.period-custom {
+  grid-template-columns: 140px 140px 140px 140px minmax(190px, 1fr) auto auto;
 }
 
 .field {
@@ -451,6 +486,12 @@ h2 {
   color: var(--muted);
   font-size: 12px;
   font-weight: 750;
+}
+
+.month-hint {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .field input,

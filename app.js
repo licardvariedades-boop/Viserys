@@ -53,14 +53,20 @@ let refs = {};
 let sessionSaveTimer = 0;
 
 document.addEventListener("DOMContentLoaded", () => {
+  removeLegacyAnalysisFilter();
+
   refs = {
     platformFile: document.querySelector("#platformFile"),
     marketplaceFile: document.querySelector("#marketplaceFile"),
+    extraFile: document.querySelector("#extraFile"),
     platformFileName: document.querySelector("#platformFileName"),
     marketplaceFileName: document.querySelector("#marketplaceFileName"),
+    extraFileName: document.querySelector("#extraFileName"),
     analysisMonth: document.querySelector("#analysisMonth"),
+    monthHint: document.querySelector("#monthHint"),
     newAnalysis: document.querySelector("#newAnalysis"),
     saveAnalysis: document.querySelector("#saveAnalysis"),
+    saveAnalysisText: document.querySelector("#saveAnalysisText"),
     analysisCount: document.querySelector("#analysisCount"),
     healthPanel: document.querySelector("#healthPanel"),
     loginScreen: document.querySelector("#loginScreen"),
@@ -74,8 +80,8 @@ document.addEventListener("DOMContentLoaded", () => {
     exportXlsx: document.querySelector("#exportXlsx"),
     exportCsv: document.querySelector("#exportCsv"),
     themeToggle: document.querySelector("#themeToggle"),
+    filters: document.querySelector(".filters"),
     periodPreset: document.querySelector("#periodPreset"),
-    analysisFilter: document.querySelector("#analysisFilter"),
     yearField: document.querySelector("#yearField"),
     yearFilter: document.querySelector("#yearFilter"),
     monthField: document.querySelector("#monthField"),
@@ -126,6 +132,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   refs.platformFile.addEventListener("change", (event) => handleFile("platform", event));
   refs.marketplaceFile.addEventListener("change", (event) => handleFile("marketplace", event));
+  refs.extraFile?.addEventListener("change", handleExtraFile);
   refs.newAnalysis.addEventListener("click", clearDraftAnalysis);
   refs.saveAnalysis.addEventListener("click", saveCurrentAnalysis);
   refs.analysisMonth.addEventListener("change", syncDraftState);
@@ -139,7 +146,6 @@ document.addEventListener("DOMContentLoaded", () => {
     applyFilters();
   });
   [
-    refs.analysisFilter,
     refs.yearFilter,
     refs.monthFilter,
     refs.startDate,
@@ -148,7 +154,7 @@ document.addEventListener("DOMContentLoaded", () => {
     refs.productSearch,
     refs.onlyMatched,
     refs.ignoreCanceled,
-  ].forEach((element) => {
+  ].filter(Boolean).forEach((element) => {
     element.addEventListener("input", applyFilters);
     element.addEventListener("change", applyFilters);
   });
@@ -202,6 +208,11 @@ function setTheme(theme) {
   refreshChartTheme();
 }
 
+function removeLegacyAnalysisFilter() {
+  const legacyFilter = document.querySelector("#analysisFilter");
+  legacyFilter?.closest(".field")?.remove();
+}
+
 function readStoredTheme() {
   try {
     return window.localStorage.getItem(THEME_STORAGE_KEY) || "light";
@@ -211,34 +222,157 @@ function readStoredTheme() {
 }
 
 async function handleFile(type, event) {
-  const file = event.target.files?.[0];
-  if (!file) return;
+  const files = [...(event.target.files || [])];
+  if (!files.length) return;
 
   const isPlatform = type === "platform";
   const label = isPlatform ? refs.platformFileName : refs.marketplaceFileName;
-  label.textContent = file.name;
-  updateHealth("Processando arquivo...");
+  const fileWord = files.length === 1 ? "arquivo" : "arquivos";
+  label.textContent = `Processando ${formatInteger(files.length)} ${fileWord}...`;
+  updateHealth(`Processando ${formatInteger(files.length)} ${fileWord}...`);
 
   try {
     if (!window.XLSX) {
       throw new Error("A biblioteca de Excel não carregou. Verifique a conexão com a internet.");
     }
 
-    const workbook = await readWorkbook(file);
-    const parsed = isPlatform ? parsePlatformWorkbook(workbook, file.name) : parseMarketplaceWorkbook(workbook, file.name);
-    state[type] = parsed;
+    const parsed = await parseFilesAsDataset(type, files);
+    state[type] = mergeDataset(state[type], parsed, type);
+    updateDatasetFileLabel(type);
     syncDraftState();
     updateHealth(state.platform && state.marketplace
       ? "Planilhas prontas para salvar"
-      : "Planilha carregada");
+      : "Planilha adicionada");
   } catch (error) {
     console.error(error);
-    state[type] = null;
-    label.textContent = `Erro: ${file.name}`;
+    updateDatasetFileLabel(type, `Erro: ${files.map((file) => file.name).join(" | ")}`);
     syncDraftState();
     updateHealth(error.message, "warning");
     renderAll();
+  } finally {
+    event.target.value = "";
   }
+}
+
+async function handleExtraFile(event) {
+  const files = [...(event.target.files || [])];
+  if (!files.length) return;
+
+  const fileWord = files.length === 1 ? "planilha" : "planilhas";
+  if (refs.extraFileName) refs.extraFileName.textContent = `Processando ${formatInteger(files.length)} ${fileWord}...`;
+  updateHealth(`Processando ${formatInteger(files.length)} ${fileWord} extra...`);
+
+  try {
+    if (!window.XLSX) {
+      throw new Error("A biblioteca de Excel nao carregou. Verifique a conexao com a internet.");
+    }
+
+    const grouped = { platform: null, marketplace: null };
+    const added = { platform: 0, marketplace: 0 };
+
+    for (const file of files) {
+      const workbook = await readWorkbook(file);
+      const parsed = parseWorkbookByType(workbook, file.name);
+      grouped[parsed.type] = mergeDataset(grouped[parsed.type], parsed.dataset, parsed.type);
+      added[parsed.type] += 1;
+    }
+
+    if (grouped.platform) state.platform = mergeDataset(state.platform, grouped.platform, "platform");
+    if (grouped.marketplace) state.marketplace = mergeDataset(state.marketplace, grouped.marketplace, "marketplace");
+
+    updateDatasetFileLabel("platform");
+    updateDatasetFileLabel("marketplace");
+    updateExtraFileLabel(added);
+    syncDraftState();
+    updateHealth("Planilha extra adicionada");
+  } catch (error) {
+    console.error(error);
+    if (refs.extraFileName) refs.extraFileName.textContent = `Erro: ${files.map((file) => file.name).join(" | ")}`;
+    syncDraftState();
+    updateHealth(error.message, "warning");
+    renderAll();
+  } finally {
+    event.target.value = "";
+  }
+}
+
+function parseWorkbookByType(workbook, fileName) {
+  const errors = [];
+
+  try {
+    return {
+      type: "platform",
+      dataset: parsePlatformWorkbook(workbook, fileName),
+    };
+  } catch (error) {
+    errors.push(error.message);
+  }
+
+  try {
+    return {
+      type: "marketplace",
+      dataset: parseMarketplaceWorkbook(workbook, fileName),
+    };
+  } catch (error) {
+    errors.push(error.message);
+  }
+
+  throw new Error(`Nao consegui identificar o tipo da planilha ${fileName}. ${errors.join(" ")}`);
+}
+
+function updateExtraFileLabel(added = null) {
+  if (!refs.extraFileName) return;
+
+  if (!added) {
+    refs.extraFileName.textContent = "Nenhuma planilha extra adicionada";
+    return;
+  }
+
+  const parts = [];
+  if (added.platform) parts.push(`${formatInteger(added.platform)} de pedidos`);
+  if (added.marketplace) parts.push(`${formatInteger(added.marketplace)} do Mercado Livre`);
+  refs.extraFileName.textContent = parts.length
+    ? `Adicionado: ${parts.join(" e ")}`
+    : "Nenhuma planilha extra adicionada";
+}
+
+async function parseFilesAsDataset(type, files) {
+  let merged = null;
+
+  for (const file of files) {
+    const workbook = await readWorkbook(file);
+    const parsed = type === "platform"
+      ? parsePlatformWorkbook(workbook, file.name)
+      : parseMarketplaceWorkbook(workbook, file.name);
+    merged = mergeDataset(merged, parsed, type);
+  }
+
+  return merged;
+}
+
+function updateDatasetFileLabel(type, fallbackText = "") {
+  const isPlatform = type === "platform";
+  const label = isPlatform ? refs.platformFileName : refs.marketplaceFileName;
+  if (!label) return;
+
+  const dataset = state[type];
+  if (!dataset) {
+    label.textContent = fallbackText || "Nenhum arquivo selecionado";
+    return;
+  }
+
+  const fileCount = datasetFileNames(dataset).length || 1;
+  const recordCount = dataset.rows?.length || 0;
+  const fileWord = fileCount === 1 ? "arquivo" : "arquivos";
+  const recordWord = isPlatform ? "pedidos" : "vendas ML";
+  label.textContent = `${formatInteger(fileCount)} ${fileWord} - ${formatInteger(recordCount)} ${recordWord}`;
+}
+
+function datasetFileNames(dataset) {
+  return text(dataset?.fileName)
+    .split(" | ")
+    .map((name) => name.trim())
+    .filter(Boolean);
 }
 
 function buildSessionPayload() {
@@ -278,7 +412,7 @@ function unpackDataset(dataset, type) {
   const rows = (dataset.rows || []).map(restoreRowDates).filter((row) => row[idField]);
 
   return {
-    fileName: dataset.fileName || "Dados salvos",
+    fileName: dataset.fileName == null ? "Dados salvos" : dataset.fileName,
     sheetName: dataset.sheetName || "",
     headerRow: dataset.headerRow || 1,
     rows,
@@ -350,21 +484,21 @@ function normalizeTaxRates(source = {}, legacyRate = null) {
 }
 
 async function saveCurrentAnalysis() {
-  if (!state.platform || !state.marketplace) {
-    updateHealth("Selecione as duas planilhas antes de salvar", "warning");
+  if (!state.platform && !state.marketplace) {
+    updateHealth("Adicione pelo menos uma planilha antes de salvar", "warning");
     return;
   }
 
   const selectedMonth = refs.analysisMonth?.value || "";
   if (!selectedMonth) {
-    updateHealth("Selecione o mes para salvar os pedidos", "warning");
+    updateHealth("Selecione o mes que vai receber as planilhas", "warning");
     return;
   }
 
-  const platform = datasetForMonth(state.platform, "platform", selectedMonth);
-  const marketplace = datasetForMonth(state.marketplace, "marketplace", selectedMonth);
-  if (!platform.rows.length && !marketplace.rows.length) {
-    updateHealth(`Nao encontrei pedidos em ${monthLabel(selectedMonth)} nos arquivos`, "warning");
+  const platform = state.platform ? datasetForMonth(state.platform, "platform", selectedMonth) : null;
+  const marketplace = state.marketplace ? datasetForMonth(state.marketplace, "marketplace", selectedMonth) : null;
+  if (!platform?.rows.length && !marketplace?.rows.length) {
+    updateHealth(`Nao encontrei registros em ${monthLabel(selectedMonth)} nas planilhas adicionadas`, "warning");
     return;
   }
 
@@ -374,32 +508,41 @@ async function saveCurrentAnalysis() {
     name: monthLabel(selectedMonth),
     monthKey: selectedMonth,
     createdAt: new Date().toISOString(),
-    platform,
-    marketplace,
+    platform: platform || emptyDataset("platform"),
+    marketplace: marketplace || emptyDataset("marketplace"),
   };
 
   const merged = upsertAnalysisForMonth(incoming);
   clearDraftAnalysis({ keepHealth: true });
   reconcile();
-  await saveSessionToDatabase(merged ? "Pedidos adicionados no mes" : "Mes salvo no banco");
+  await saveSessionToDatabase(merged ? "Planilhas acrescentadas no mes" : "Mes salvo no banco");
 }
 
 function upsertAnalysisForMonth(incoming) {
   const existing = state.analyses.find((analysis) => analysisMonthKey(analysis) === incoming.monthKey);
 
   if (!existing) {
-    state.analyses.push(incoming);
+    state.analyses.push({
+      ...incoming,
+      platform: incoming.platform || emptyDataset("platform"),
+      marketplace: incoming.marketplace || emptyDataset("marketplace"),
+    });
     return false;
   }
 
   existing.monthKey = incoming.monthKey;
   existing.name = monthLabel(incoming.monthKey);
-  existing.platform = mergeDataset(existing.platform, incoming.platform, "platform");
-  existing.marketplace = mergeDataset(existing.marketplace, incoming.marketplace, "marketplace");
+  if (incoming.platform?.rows.length) {
+    existing.platform = mergeDataset(existing.platform, incoming.platform, "platform");
+  }
+  if (incoming.marketplace?.rows.length) {
+    existing.marketplace = mergeDataset(existing.marketplace, incoming.marketplace, "marketplace");
+  }
   return true;
 }
 
 function datasetForMonth(dataset, type, selectedMonth) {
+  if (!dataset) return null;
   const rows = (dataset?.rows || []).filter((row) => rowMonthKey(row) === selectedMonth);
   return rebuildDataset({
     ...dataset,
@@ -407,7 +550,20 @@ function datasetForMonth(dataset, type, selectedMonth) {
   }, type);
 }
 
+function emptyDataset(type) {
+  return rebuildDataset({
+    fileName: "",
+    sheetName: "",
+    headerRow: 1,
+    rows: [],
+  }, type);
+}
+
 function mergeDataset(current, incoming, type) {
+  if (!current && !incoming) return emptyDataset(type);
+  if (!current) return rebuildDataset(incoming, type);
+  if (!incoming) return rebuildDataset(current, type);
+
   const idField = type === "platform" ? "orderId" : "saleId";
   const rowsById = new Map();
 
@@ -419,7 +575,7 @@ function mergeDataset(current, incoming, type) {
   });
 
   return rebuildDataset({
-    fileName: joinUnique([current?.fileName, incoming?.fileName], " | ") || incoming?.fileName || current?.fileName || "Dados salvos",
+    fileName: joinUnique([...datasetFileNames(current), ...datasetFileNames(incoming)], " | ") || incoming?.fileName || current?.fileName || "Dados salvos",
     sheetName: incoming?.sheetName || current?.sheetName || "",
     headerRow: incoming?.headerRow || current?.headerRow || 1,
     rows: [...rowsById.values()],
@@ -430,7 +586,7 @@ function rebuildDataset(dataset, type) {
   const idField = type === "platform" ? "orderId" : "saleId";
   const rows = (dataset?.rows || []).filter((row) => row[idField]);
   return {
-    fileName: dataset?.fileName || "Dados salvos",
+    fileName: dataset?.fileName ?? "Dados salvos",
     sheetName: dataset?.sheetName || "",
     headerRow: dataset?.headerRow || 1,
     rows,
@@ -443,29 +599,44 @@ function clearDraftAnalysis(options = {}) {
   state.marketplace = null;
   if (refs.platformFile) refs.platformFile.value = "";
   if (refs.marketplaceFile) refs.marketplaceFile.value = "";
+  if (refs.extraFile) refs.extraFile.value = "";
   if (refs.platformFileName) refs.platformFileName.textContent = "Nenhum arquivo selecionado";
   if (refs.marketplaceFileName) refs.marketplaceFileName.textContent = "Nenhum arquivo selecionado";
+  updateExtraFileLabel();
   syncDraftState();
   if (!options.keepHealth) updateHealth();
 }
 
 function syncDraftState() {
   updateAnalysisMonthOptions();
-  const readyToSave = Boolean(state.platform && state.marketplace && refs.analysisMonth?.value);
+  const selectedMonth = refs.analysisMonth?.value || "";
+  const draft = selectedMonth ? draftMonthStats().get(selectedMonth) : null;
+  const readyToSave = Boolean(selectedMonth && (draft?.platform || draft?.marketplace));
   if (refs.saveAnalysis) refs.saveAnalysis.disabled = !readyToSave;
   if (refs.analysisCount) {
     const total = state.analyses.length;
     refs.analysisCount.textContent = `${formatInteger(total)} ${total === 1 ? "analise salva" : "analises salvas"}`;
   }
+  updateSaveAnalysisText();
+  updateMonthHint();
+}
+
+function updateSaveAnalysisText() {
+  if (!refs.saveAnalysisText) return;
+  const selectedMonth = refs.analysisMonth?.value || "";
+  const saved = selectedMonth ? savedMonthStats().get(selectedMonth) : null;
+  refs.saveAnalysisText.textContent = saved?.saved ? "Acrescentar no mes" : "Salvar mes";
 }
 
 function updateAnalysisMonthOptions() {
   if (!refs.analysisMonth) return;
 
   const previous = refs.analysisMonth.value;
-  const savedMonths = state.analyses.map(analysisMonthKey).filter(Boolean);
-  const draftMonths = draftMonthKeys();
-  const months = [...new Set([...draftMonths, ...savedMonths])].sort();
+  const draftStats = draftMonthStats();
+  const savedStats = savedMonthStats();
+  const draftMonths = [...draftStats.keys()].sort();
+  const savedOnlyMonths = [...savedStats.keys()].filter((key) => !draftStats.has(key)).sort();
+  const months = [...new Set([...draftMonths, ...savedOnlyMonths])].sort();
 
   if (!months.length) {
     refs.analysisMonth.innerHTML = `<option value="">Importe as planilhas</option>`;
@@ -473,14 +644,15 @@ function updateAnalysisMonthOptions() {
     return;
   }
 
-  const savedSet = new Set(savedMonths);
   refs.analysisMonth.disabled = false;
   refs.analysisMonth.innerHTML = [
-    `<option value="">Selecione o mes</option>`,
-    ...months.map((key) => {
-      const suffix = savedSet.has(key) ? " (salvo)" : "";
-      return `<option value="${escapeAttribute(key)}">${escapeHtml(monthLabel(key) + suffix)}</option>`;
-    }),
+    `<option value="">Selecione mes/ano</option>`,
+    draftMonths.length
+      ? `<optgroup label="Meses nas planilhas">${draftMonths.map((key) => monthOptionHtml(key, draftStats, savedStats)).join("")}</optgroup>`
+      : "",
+    savedOnlyMonths.length
+      ? `<optgroup label="Meses salvos">${savedOnlyMonths.map((key) => monthOptionHtml(key, draftStats, savedStats)).join("")}</optgroup>`
+      : "",
   ].join("");
 
   if (previous && months.includes(previous)) {
@@ -490,8 +662,112 @@ function updateAnalysisMonthOptions() {
   }
 }
 
-function draftMonthKeys() {
-  return monthKeysFromDatasets(state.platform, state.marketplace);
+function monthOptionHtml(key, draftStats, savedStats) {
+  const draft = draftStats.get(key) || createMonthStat();
+  const saved = savedStats.get(key) || createMonthStat();
+  const hasDraft = draft.platform || draft.marketplace;
+  const pieces = [monthLabel(key)];
+
+  if (hasDraft) {
+    pieces.push(`${formatInteger(draft.platform)} pedidos`);
+    pieces.push(`${formatInteger(draft.marketplace)} ML`);
+  } else {
+    pieces.push(`${formatInteger(saved.savedPlatform)} pedidos salvos`);
+    pieces.push(`${formatInteger(saved.savedMarketplace)} ML salvas`);
+  }
+
+  if (saved.saved) {
+    pieces.push(hasDraft ? "somar ao salvo" : "salvo");
+  }
+
+  return `<option value="${escapeAttribute(key)}">${escapeHtml(pieces.join(" - "))}</option>`;
+}
+
+function updateMonthHint() {
+  if (!refs.monthHint) return;
+
+  const selectedMonth = refs.analysisMonth?.value || "";
+  if (!selectedMonth) {
+    refs.monthHint.textContent = state.platform || state.marketplace
+      ? "Escolha o mes que vai receber as planilhas adicionadas."
+      : "Escolha um mes salvo ou importe uma planilha para criar um novo mes.";
+    return;
+  }
+
+  const draft = draftMonthStats().get(selectedMonth) || createMonthStat();
+  const saved = savedMonthStats().get(selectedMonth) || createMonthStat();
+  const hasDraft = draft.platform || draft.marketplace;
+  const hasSaved = saved.saved || saved.savedPlatform || saved.savedMarketplace;
+
+  if (hasDraft) {
+    const action = hasSaved
+      ? "Ao clicar em Acrescentar, estes registros entram no mes ja salvo."
+      : "Ao salvar, cria um mes novo no banco.";
+    refs.monthHint.textContent = `${monthLabel(selectedMonth)}: ${formatInteger(draft.platform)} pedidos e ${formatInteger(draft.marketplace)} vendas ML neste lote. ${action}`;
+    return;
+  }
+
+  if (hasSaved) {
+    refs.monthHint.textContent = `${monthLabel(selectedMonth)} ja tem ${formatInteger(saved.savedPlatform)} pedidos e ${formatInteger(saved.savedMarketplace)} vendas ML salvas. Adicione uma nova planilha desse mes para acrescentar.`;
+    return;
+  }
+
+  refs.monthHint.textContent = "Escolha um mes valido para salvar.";
+}
+
+function draftMonthStats() {
+  return monthStatsFromDatasetMap({ platform: state.platform, marketplace: state.marketplace });
+}
+
+function savedMonthStats() {
+  const stats = new Map();
+
+  state.analyses.forEach((analysis) => {
+    const key = analysisMonthKey(analysis);
+
+    if (isMonthKey(key)) {
+      const item = ensureMonthStat(stats, key);
+      item.saved = true;
+      item.savedPlatform += analysis.platform?.rows?.length || 0;
+      item.savedMarketplace += analysis.marketplace?.rows?.length || 0;
+      return;
+    }
+
+    addDatasetMonthStats(stats, analysis.platform, "savedPlatform");
+    addDatasetMonthStats(stats, analysis.marketplace, "savedMarketplace");
+  });
+
+  return stats;
+}
+
+function monthStatsFromDatasetMap(datasets) {
+  const stats = new Map();
+  addDatasetMonthStats(stats, datasets.platform, "platform");
+  addDatasetMonthStats(stats, datasets.marketplace, "marketplace");
+  return stats;
+}
+
+function addDatasetMonthStats(stats, dataset, field) {
+  (dataset?.rows || []).forEach((row) => {
+    const key = rowMonthKey(row);
+    if (!isMonthKey(key)) return;
+    ensureMonthStat(stats, key)[field] += 1;
+  });
+}
+
+function ensureMonthStat(stats, key) {
+  if (!stats.has(key)) stats.set(key, createMonthStat());
+  return stats.get(key);
+}
+
+function createMonthStat() {
+  return {
+    platform: 0,
+    marketplace: 0,
+    savedPlatform: 0,
+    savedMarketplace: 0,
+    saved: false,
+  };
 }
 
 function analysisMonthKey(analysis) {
@@ -638,10 +914,11 @@ function resetDashboardState() {
   state.filteredDiffs = [];
   refs.platformFile.value = "";
   refs.marketplaceFile.value = "";
+  if (refs.extraFile) refs.extraFile.value = "";
   refs.platformFileName.textContent = "Nenhum arquivo selecionado";
   refs.marketplaceFileName.textContent = "Nenhum arquivo selecionado";
+  updateExtraFileLabel();
   refs.periodPreset.value = "all";
-  refs.analysisFilter.value = "all";
   refs.statusFilter.value = "all";
   refs.productSearch.value = "";
   refs.onlyMatched.checked = true;
@@ -1139,11 +1416,6 @@ function matchesFilters(row, respectOnlyMatched, respectIgnored = true) {
     return false;
   }
 
-  const selectedAnalysis = refs.analysisFilter?.value || "all";
-  if (selectedAnalysis !== "all" && row.analysisId !== selectedAnalysis) {
-    return false;
-  }
-
   if (respectIgnored && refs.ignoreCanceled?.checked && isCancelled(row)) {
     return false;
   }
@@ -1190,20 +1462,9 @@ function matchesFilters(row, respectOnlyMatched, respectIgnored = true) {
 
 function updateFilterOptions() {
   const rows = [...state.rows, ...state.mlOnly];
-  const previousAnalysis = refs.analysisFilter?.value || "all";
   const previousYear = refs.yearFilter?.value || "";
   const previousMonth = refs.monthFilter?.value || "";
   const previousStatus = refs.statusFilter?.value || "all";
-
-  refs.analysisFilter.innerHTML = [
-    `<option value="all">Todas</option>`,
-    ...state.analyses.map((analysis) => (
-      `<option value="${escapeAttribute(analysis.id)}">${escapeHtml(analysis.name)}</option>`
-    )),
-  ].join("");
-  if (previousAnalysis === "all" || state.analyses.some((analysis) => analysis.id === previousAnalysis)) {
-    refs.analysisFilter.value = previousAnalysis;
-  }
 
   const years = [...new Set(rows.map((row) => yearKey(row.date)).filter(Boolean))].sort();
   refs.yearFilter.innerHTML = years.length
@@ -1231,6 +1492,8 @@ function updateFilterOptions() {
 
 function syncFilterVisibility() {
   const preset = refs.periodPreset?.value || "all";
+  refs.filters?.classList.remove("period-all", "period-year", "period-month", "period-custom");
+  refs.filters?.classList.add(`period-${preset}`);
   refs.yearField.classList.toggle("hidden", preset !== "year");
   refs.monthField.classList.toggle("hidden", preset !== "month");
   refs.startField.classList.toggle("hidden", preset !== "custom");
@@ -2074,13 +2337,11 @@ function exportWorkbook() {
   const metrics = currentMetrics();
   const taxTotals = taxSummaryTotal();
   const returnsIgnored = state.filteredClosing.filter(isReturned).length;
-  const selectedAnalysis = state.analyses.find((analysis) => analysis.id === refs.analysisFilter?.value);
   const cancelledIgnored = refs.ignoreCanceled?.checked
     ? [...state.rows, ...state.mlOnly].filter((row) => isCancelled(row) && matchesFilters(row, false, false)).length
     : 0;
   const summary = [
     ["Analises salvas", state.analyses.length],
-    ["Filtro de analise", selectedAnalysis?.name || "Todas"],
     ["Arquivos pedidos", state.analyses.map((analysis) => analysis.platform.fileName).join(" | ")],
     ["Arquivos Mercado Livre", state.analyses.map((analysis) => analysis.marketplace.fileName).join(" | ")],
     ["Modo do fechamento", financialBaseLabel()],
