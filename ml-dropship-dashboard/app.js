@@ -51,6 +51,8 @@ const MONTH_NAMES = [
 
 let refs = {};
 let sessionSaveTimer = 0;
+const undoStack = [];
+const MAX_UNDO_STEPS = 20;
 
 document.addEventListener("DOMContentLoaded", () => {
   removeLegacyAnalysisFilter();
@@ -79,6 +81,7 @@ document.addEventListener("DOMContentLoaded", () => {
     logoutButton: document.querySelector("#logoutButton"),
     exportXlsx: document.querySelector("#exportXlsx"),
     exportCsv: document.querySelector("#exportCsv"),
+    undoAction: document.querySelector("#undoAction"),
     themeToggle: document.querySelector("#themeToggle"),
     filters: document.querySelector(".filters"),
     periodPreset: document.querySelector("#periodPreset"),
@@ -140,6 +143,7 @@ document.addEventListener("DOMContentLoaded", () => {
   refs.logoutButton.addEventListener("click", handleLogout);
   refs.exportXlsx.addEventListener("click", exportWorkbook);
   refs.exportCsv.addEventListener("click", exportCsv);
+  refs.undoAction?.addEventListener("click", undoLastAction);
   refs.themeToggle.addEventListener("click", toggleTheme);
   refs.periodPreset.addEventListener("change", () => {
     syncFilterVisibility();
@@ -208,6 +212,72 @@ function setTheme(theme) {
   refreshChartTheme();
 }
 
+function pushUndoState(label = "Ação") {
+  undoStack.push({
+    label,
+    snapshot: createUndoSnapshot(),
+  });
+
+  if (undoStack.length > MAX_UNDO_STEPS) undoStack.shift();
+  updateUndoButton();
+}
+
+function createUndoSnapshot() {
+  return JSON.parse(JSON.stringify({
+    analyses: state.analyses.map(packAnalysis),
+    manualAdjustments: packManualAdjustments(),
+    taxRates: packTaxRates(),
+    platform: packDataset(state.platform),
+    marketplace: packDataset(state.marketplace),
+    activeTab: state.activeTab,
+  }));
+}
+
+async function undoLastAction() {
+  const item = undoStack.pop();
+  if (!item) return;
+
+  window.clearTimeout(sessionSaveTimer);
+  if (refs.undoAction) refs.undoAction.disabled = true;
+  restoreUndoSnapshot(item.snapshot);
+  reconcile();
+  setTab(state.activeTab || "closing");
+  updateUndoButton();
+  await saveSessionToDatabase(`${item.label} desfeita`, { allowEmpty: true });
+}
+
+function restoreUndoSnapshot(snapshot) {
+  state.analyses = (snapshot?.analyses || [])
+    .map((analysis, index) => unpackAnalysis(analysis, index))
+    .filter(Boolean);
+  state.manualAdjustments = normalizeManualAdjustments(snapshot?.manualAdjustments);
+  state.taxRates = normalizeTaxRates(snapshot?.taxRates);
+  state.platform = unpackDataset(snapshot?.platform, "platform");
+  state.marketplace = unpackDataset(snapshot?.marketplace, "marketplace");
+  state.activeTab = snapshot?.activeTab || "closing";
+  state.expandedProducts.clear();
+
+  if (refs.platformFile) refs.platformFile.value = "";
+  if (refs.marketplaceFile) refs.marketplaceFile.value = "";
+  if (refs.extraFile) refs.extraFile.value = "";
+  updateDatasetFileLabel("platform");
+  updateDatasetFileLabel("marketplace");
+  updateExtraFileLabel();
+  syncDraftState();
+}
+
+function clearUndoHistory() {
+  undoStack.length = 0;
+  updateUndoButton();
+}
+
+function updateUndoButton() {
+  if (!refs.undoAction) return;
+  const last = undoStack.at(-1);
+  refs.undoAction.disabled = !last;
+  refs.undoAction.title = last ? `Desfazer: ${last.label}` : "Desfazer última ação";
+}
+
 function removeLegacyAnalysisFilter() {
   const legacyFilter = document.querySelector("#analysisFilter");
   legacyFilter?.closest(".field")?.remove();
@@ -237,6 +307,7 @@ async function handleFile(type, event) {
     }
 
     const parsed = await parseFilesAsDataset(type, files);
+    pushUndoState("Planilha adicionada");
     state[type] = mergeDataset(state[type], parsed, type);
     updateDatasetFileLabel(type);
     syncDraftState();
@@ -277,6 +348,7 @@ async function handleExtraFile(event) {
       added[parsed.type] += 1;
     }
 
+    pushUndoState("Planilha extra adicionada");
     if (grouped.platform) state.platform = mergeDataset(state.platform, grouped.platform, "platform");
     if (grouped.marketplace) state.marketplace = mergeDataset(state.marketplace, grouped.marketplace, "marketplace");
 
@@ -502,6 +574,8 @@ async function saveCurrentAnalysis() {
     return;
   }
 
+  const willMerge = Boolean(state.analyses.find((analysis) => analysisMonthKey(analysis) === selectedMonth));
+  pushUndoState(willMerge ? "Acréscimo no mês" : "Mês salvo");
   refs.saveAnalysis.disabled = true;
   const incoming = {
     id: createAnalysisId(),
@@ -595,6 +669,10 @@ function rebuildDataset(dataset, type) {
 }
 
 function clearDraftAnalysis(options = {}) {
+  if (!options.keepHealth && (state.platform || state.marketplace)) {
+    pushUndoState("Lote limpo");
+  }
+
   state.platform = null;
   state.marketplace = null;
   if (refs.platformFile) refs.platformFile.value = "";
@@ -822,6 +900,7 @@ function applySessionPayload(payload) {
   clearDraftAnalysis({ keepHealth: true });
   reconcile();
   syncDraftState();
+  clearUndoHistory();
 }
 
 function hasImportedData() {
@@ -912,6 +991,7 @@ function resetDashboardState() {
   state.mlOnly = [];
   state.filteredClosing = [];
   state.filteredDiffs = [];
+  clearUndoHistory();
   refs.platformFile.value = "";
   refs.marketplaceFile.value = "";
   if (refs.extraFile) refs.extraFile.value = "";
@@ -946,8 +1026,8 @@ async function loadSessionFromDatabase() {
   }
 }
 
-async function saveSessionToDatabase(successMessage = "Dados salvos no banco") {
-  if (!hasImportedData()) return;
+async function saveSessionToDatabase(successMessage = "Dados salvos no banco", options = {}) {
+  if (!hasImportedData() && !options.allowEmpty) return;
 
   try {
     await sessionRequest("POST", { payload: buildSessionPayload() });
@@ -1510,6 +1590,7 @@ function renderAll(options = {}) {
   const hasData = state.rows.length > 0 || state.mlOnly.length > 0;
   refs.exportXlsx.disabled = !hasData;
   refs.exportCsv.disabled = !hasData;
+  updateUndoButton();
 }
 
 function renderKpis() {
@@ -1658,6 +1739,7 @@ function handleTaxRateInput(event) {
   const input = event.target.closest("[data-tax-rate-key]");
   if (!input) return;
 
+  captureEditorUndo(input, "Alteração de alíquota");
   const key = input.dataset.taxRateKey;
   setTaxRateForMonth(key, parseMoney(input.value));
   updateRenderedTaxAmounts(key);
@@ -1667,6 +1749,7 @@ function handleTaxRateInput(event) {
 function handleTaxRateBlur(event) {
   const input = event.target.closest("[data-tax-rate-key]");
   if (!input) return;
+  releaseEditorUndo(input);
   input.value = formatEditableMoney(taxRateForMonth(input.dataset.taxRateKey));
   updateRenderedTaxAmounts(input.dataset.taxRateKey);
 }
@@ -2041,6 +2124,7 @@ function handleDiffAdjustmentInput(event) {
   const row = findRowByAdjustmentKey(input.dataset.adjustmentKey);
   if (!row) return;
 
+  captureEditorUndo(input, "Alteração de valor");
   setManualAdjustment(row, input.dataset.adjustmentField, parseMoney(input.value));
   input.classList.toggle("adjusted", hasManualAdjustmentField(row.adjustmentKey, input.dataset.adjustmentField));
   applyFilters({ renderTable: false });
@@ -2050,7 +2134,18 @@ function handleDiffAdjustmentInput(event) {
 function handleDiffAdjustmentBlur(event) {
   const input = event.target.closest("[data-adjustment-field]");
   if (!input) return;
+  releaseEditorUndo(input);
   input.value = formatEditableMoney(parseMoney(input.value));
+}
+
+function captureEditorUndo(input, label) {
+  if (input.dataset.undoCaptured === "true") return;
+  pushUndoState(label);
+  input.dataset.undoCaptured = "true";
+}
+
+function releaseEditorUndo(input) {
+  delete input.dataset.undoCaptured;
 }
 
 function findRowByAdjustmentKey(key) {
