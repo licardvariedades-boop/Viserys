@@ -478,10 +478,10 @@ async function saveCurrentAnalysis() {
     return;
   }
 
-  const platform = datasetForSelectedMonthOrAll(state.platform, "platform", selectedMonth);
-  const marketplace = datasetForSelectedMonthOrAll(state.marketplace, "marketplace", selectedMonth);
+  const platform = datasetForSelectedMonth(state.platform, "platform");
+  const marketplace = datasetForSelectedMonth(state.marketplace, "marketplace");
   if (!platform?.rows.length && !marketplace?.rows.length) {
-    updateHealth(`Nao encontrei registros em ${monthLabel(selectedMonth)} nas planilhas adicionadas`, "warning");
+    updateHealth("Nao encontrei registros nas planilhas adicionadas", "warning");
     return;
   }
 
@@ -535,10 +535,9 @@ function datasetForMonth(dataset, type, selectedMonth) {
   }, type);
 }
 
-function datasetForSelectedMonthOrAll(dataset, type, selectedMonth) {
+function datasetForSelectedMonth(dataset, type) {
   if (!dataset) return null;
-  const filtered = datasetForMonth(dataset, type, selectedMonth);
-  return filtered.rows.length ? filtered : rebuildDataset(dataset, type);
+  return rebuildDataset(dataset, type);
 }
 
 function emptyDataset(type) {
@@ -673,7 +672,7 @@ function updateMonthHint() {
   const selectedMonth = refs.analysisMonth?.value || "";
   if (!selectedMonth) {
     refs.monthHint.textContent = state.platform || state.marketplace
-      ? "Escolha o mes que vai receber as planilhas e clique em Adicionar planilha."
+      ? "Escolha o mes que vai receber todo o lote carregado e clique em Adicionar planilha."
       : "Escolha o mes, carregue pedidos e Mercado Livre nos cards, e clique em Adicionar planilha.";
     return;
   }
@@ -685,7 +684,7 @@ function updateMonthHint() {
 
   if (hasDraft) {
     const action = hasSaved
-      ? "Ao clicar em Adicionar planilha, este lote entra no mes escolhido."
+      ? "Ao clicar em Adicionar planilha, todo este lote entra no mes escolhido."
       : "Ao clicar em Adicionar planilha, cria um mes novo no banco.";
     refs.monthHint.textContent = `${monthLabel(selectedMonth)}: ${formatInteger(draft.platform)} pedidos e ${formatInteger(draft.marketplace)} vendas ML neste lote. ${action}`;
     return;
@@ -773,6 +772,10 @@ function monthKeysFromDatasets(...datasets) {
 
 function rowMonthKey(row) {
   return monthKey(row?.date || row?.marketplaceDate || row?.platformDate || row?.updatedAt);
+}
+
+function closingMonthKey(row) {
+  return isMonthKey(row?.analysisMonthKey) ? row.analysisMonthKey : monthKey(row?.date);
 }
 
 function isMonthKey(value) {
@@ -1264,6 +1267,7 @@ function reconcileAnalysis(analysis) {
   const analysisFields = {
     analysisId: analysis.id,
     analysisName: analysis.name,
+    analysisMonthKey: analysisMonthKey(analysis),
   };
 
   const rows = analysis.platform.rows.map((platformRow) => {
@@ -1412,7 +1416,7 @@ function matchesFilters(row, respectOnlyMatched, respectIgnored = true) {
 
   if (preset === "month") {
     const selectedMonth = refs.monthFilter?.value || "";
-    if (selectedMonth && monthKey(row.date) !== selectedMonth) return false;
+    if (selectedMonth && closingMonthKey(row) !== selectedMonth) return false;
   }
 
   if (preset === "custom") {
@@ -1456,7 +1460,7 @@ function updateFilterOptions() {
     : `<option value="">Sem ano</option>`;
   if (years.includes(previousYear)) refs.yearFilter.value = previousYear;
 
-  const months = [...new Set(rows.map((row) => monthKey(row.date)).filter(Boolean))].sort();
+  const months = [...new Set(rows.map(closingMonthKey).filter(Boolean))].sort();
   refs.monthFilter.innerHTML = months.length
     ? months.map((key) => `<option value="${key}">${monthLabel(key)}</option>`).join("")
     : `<option value="">Sem mês</option>`;
@@ -1573,7 +1577,7 @@ function taxSummaryRows(rows = financialRows()) {
   rows.forEach((row) => {
     if (isReturned(row)) return;
 
-    const key = monthKey(row.date) || "sem-data";
+    const key = closingMonthKey(row) || "sem-data";
     if (!map.has(key)) {
       map.set(key, {
         key,
